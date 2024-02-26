@@ -56,7 +56,9 @@ def AllPermutations(n):
 
 def TestAllPermutations(n,verbose):
     degrees=[]
+    c=0
     for sigma in AllPermutations(n-1):
+        c=c+1
         deg=ComputeDegree(sigma)[0]
         length=ComputeDegree(sigma)[1]
         if deg < 0: print("Whoa, that's a negative degree at ",sigma)
@@ -64,5 +66,6 @@ def TestAllPermutations(n,verbose):
         #print(sigma,ComputeDegree(sigma))
         degrees[deg]=degrees[deg]+1
         if verbose==True: print (sigma,deg,degrees)
+        if c%100000 == 0: print (sigma,c)
     return degrees
         
