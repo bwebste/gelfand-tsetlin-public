@@ -524,13 +524,13 @@ def main_parallel(n, v_counts):
         wordie = concatenate_word(word)
         v_count = [wordie.count(i) for i in range(1, n + 1)]
         file_handle = f"unique_values_{wordie}_v_counts_{v_count}.pkl"  # Use .pkl for binary files
+        char_file_handle = f"simple_character_{wordie}_v_counts_{v_count}.pkl"
         directory_name = f"_binary_{v_count}"
-        if not os.path.exists(directory_name):
-            os.makedirs(directory_name)
         file_name = os.path.join(directory_name, file_handle)
-        unique_values[i] = read_file(file_name)  # Use read_file
-        if unique_values[i] is None:
-            j = i
+        char_file_name = os.path.join(directory_name, char_file_handle)
+        unique_values[i] = read_file(file_name)
+        if unique_values[i] is None or not os.path.exists(char_file_name):
+            j=i
             break
     print("----------------restarting with j=", j)
     time.sleep(1)
@@ -577,13 +577,14 @@ def main(n, v_counts):
         wordie = concatenate_word(word)
         v_count = [wordie.count(i) for i in range(1, n + 1)]
         file_handle = f"unique_values_{wordie}_v_counts_{v_count}.pkl"
+        char_file_handle = f"simple_character_{wordie}_v_counts_{v_count}.pkl"
         directory_name = f"_binary_{v_count}"
         file_name = os.path.join(directory_name, file_handle)
-
+        char_file_name = os.path.join(directory_name, char_file_handle)
         unique_values[i] = read_file(file_name)
-        if unique_values[i] is None:
+        if unique_values[i] is None or not os.path.exists(char_file_name):
             j=i
-            break
+            break    
     print("j=",j)
     #for i in range(j, len(red_good_words)):
     word = red_good_words[j]
