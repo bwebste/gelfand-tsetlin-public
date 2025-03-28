@@ -96,6 +96,23 @@ class LaurentPolynomial:
                 terms.append(f"{coeff if coeff != 1 else ''}q^({power})")
         return " + ".join(terms) if terms else "0"
     
+    def latex(self):
+        if not self.coeffs:
+            return "0"
+        terms = []
+        for power, coeff in sorted(self.coeffs.items()):
+            if coeff == 0:
+                continue
+            if power == 0:
+                terms.append(f"{coeff}")
+            elif power == 1:
+                terms.append(f"{coeff if coeff != 1 else ''}q")
+            elif power == -1:
+                terms.append(f"{coeff if coeff != 1 else ''}q^{{-1}}")
+            else:
+                terms.append(f"{coeff if coeff != 1 else ''}q^{{{power}}}")
+        return " + ".join(terms) if terms else "0"
+
     def __eq__(self,other):
         if not isinstance(other, LaurentPolynomial):
             return False
@@ -184,16 +201,16 @@ def sync_to_server():
             check=True
         )
         subprocess.run(
-            ["rsync", "-avz", local_dir, remote_dir2],
+            ["rsync", "-avz",  local_dir, remote_dir2],
             check=True
         )
         print("Trying to sync from server...")
         subprocess.run(
-            ["rsync", "-avz", from_remote_dir, from_local_dir],
+            ["rsync", "-avz", "--exclude", "tryagain-binary*", from_remote_dir, from_local_dir],
             check=True
         )
         subprocess.run(
-            ["rsync", "-avz", from_remote_dir2, from_local_dir],
+            ["rsync", "-avz", "--exclude", "tryagain-binary*", from_remote_dir2, from_local_dir],
             check=True
         )
         print("Sync completed successfully.")
@@ -383,7 +400,7 @@ def compute_one_simple_character(red_good_words, i, n):
     size = 50
     g = i / size
     for j in range(i, -1, -1):
-        if j % 40==0:
+        if j % 100==0:
             sync_to_server()
         maybe_char = read_file(file_name)
         if maybe_char is not None:
@@ -401,6 +418,12 @@ def compute_one_simple_character(red_good_words, i, n):
             except RuntimeError as e:
                 print(f"Error: {e}")
                 raise RuntimeError(f"File {file_name} not found. Retrying...")
+    backup_file_handle = f"simple_character_{wordie}_v_counts_{v_count}.pkl"
+    backup_directory_name = f"_backup_{v_count}"
+    backup_file_name = os.path.join(backup_directory_name, backup_file_handle)
+    if not os.path.exists(backup_directory_name):
+        os.makedirs(backup_directory_name)
+    write_file(backup_file_name, current_char)
     #sync_to_server()
     print("done computing simple character for ", wordie)
     write_file(file_name, current_char)
@@ -618,16 +641,73 @@ def main(n, v_counts):
     # write_file(file_name, full_unique_values)
     print("On to the next one!")
 
+def latexify(g):
+    if isinstance(g, LaurentPolynomial):
+        return g.latex()
+    else:
+        return str(g)
+def oneify(g):
+    if isinstance(g, LaurentPolynomial):
+        return g.evaluate_at_q1()
+    else:
+        return int(g)
+
+def print_unique_values(n, v_count):
+    red_good_words = generate_red_good_words(n, v_count, 0)
+    unique_values = {}
+    values = {}
+    valuesq = {}
+
+    for i in range(len(red_good_words)):
+        word = red_good_words[i]
+        wordie = concatenate_word(word)
+        file_handle = f"unique_values_{wordie}_v_counts_{v_count}.pkl"
+        directory_name = f"_binary_{v_count}"
+        file_name = os.path.join(directory_name, file_handle)
+        unique_values[i] = read_file(file_name)
+        if unique_values[i] is None:
+            unique_values[i] = {}
+        unique_values[i] = sorted(unique_values[i], key=oneify)
+        valuesq[i] = map(latexify, unique_values[i])
+        values[i] = map(oneify, unique_values[i])
+        values[i] = sorted(set(values[i]), key=oneify)
+        print("Unique dimensions for ", i, "th red-good-word:", wordie)
+        print("\n".join(str(value) for value in values[i]))
+        print("Graded dimensions for ", i, "th red-good-word:", wordie)
+        print("\n".join(value for value in valuesq[i]))
+
+    # Process full unique values
+    full_unique_values = set(x for i in range(len(red_good_words)) for x in unique_values[i])
+    full_unique_values = sorted(full_unique_values, key=oneify)
+
+    full_values = map(oneify, full_unique_values)
+    full_values = sorted(set(full_values), key=oneify)
+    full_valuesq = map(latexify, full_unique_values)
+
+    print("\nUnique values of characters:")
+    print(", ".join(str(value) for value in full_values))
+    print("\nGraded values of characters:")
+    print(", ".join(value for value in full_valuesq))
+
+    file_name = f"results_{n}_vcounts_{v_count}.pkl"
+    write_file(file_name, full_unique_values)  # Use write_file
+
+    print("All done!")
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Compute characters of simple modules.")
-    parser.add_argument("mode", choices=["main", "main_parallel"], help="Mode to run the script in.")
+    parser.add_argument("mode", choices=["main", "main_parallel","print_unique_values"], help="Mode to run the script in.")
     parser.add_argument("n", type=int, help="Value of n.")
     parser.add_argument("v_counts", type=int, nargs="+", help="List of counts.")
 
     args = parser.parse_args()
-    while True:
-        if args.mode == "main":
-            main(args.n, args.v_counts)
-        elif args.mode == "main_parallel":
-            main_parallel(args.n, args.v_counts)
+
+    if args.mode == "print_unique_values":
+            print_unique_values(args.n, args.v_counts)
+    else:
+        while True:
+            if args.mode == "main":
+                main(args.n, args.v_counts)
+            elif args.mode == "main_parallel":
+                main_parallel(args.n, args.v_counts)
 

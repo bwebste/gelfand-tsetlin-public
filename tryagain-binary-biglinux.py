@@ -399,6 +399,12 @@ def compute_one_simple_character(red_good_words, i, n):
             except RuntimeError as e:
                 print(f"Error: {e}")
                 raise RuntimeError(f"File {file_name} not found. Retrying...")
+    backup_file_handle = f"simple_character_{wordie}_v_counts_{v_count}.pkl"
+    backup_directory_name = f"_backup_{v_count}"
+    backup_file_name = os.path.join(backup_directory_name, backup_file_handle)
+    if not os.path.exists(backup_directory_name):
+        os.makedirs(backup_directory_name)
+    write_file(backup_file_name, current_char)
     #sync_to_server()
     print("done computing simple character for ", wordie)
     write_file(file_name, current_char)
@@ -616,10 +622,23 @@ def main(n, v_counts):
     # write_file(file_name, full_unique_values)
     print("On to the next one!")
 
-def print_unique_values(n,v_count):
-    red_good_words=generate_red_good_words(n, v_count, 0)
+def latexify(g):
+    if isinstance(g, LaurentPolynomial):
+        return g.latex()
+    else:
+        return str(g)
+def oneify(g):
+    if isinstance(g, LaurentPolynomial):
+        return g.evaluate_at_q1()
+    else:
+        return int(g)
+
+def print_unique_values(n, v_count):
+    red_good_words = generate_red_good_words(n, v_count, 0)
     unique_values = {}
     values = {}
+    valuesq = {}
+
     for i in range(len(red_good_words)):
         word = red_good_words[i]
         wordie = concatenate_word(word)
@@ -627,31 +646,49 @@ def print_unique_values(n,v_count):
         directory_name = f"_binary_{v_count}"
         file_name = os.path.join(directory_name, file_handle)
         unique_values[i] = read_file(file_name)
-        values[i] = [str(value) + " = " + str(value.evaluate_at_q1()) for value in unique_values[i] if isinstance(value, LaurentPolynomial)] + \
-                [str(value) for value in unique_values[i] if not isinstance(value, LaurentPolynomial)]
-        print("Unique values for ", i, "th red-good-word:", wordie)
-        print("\n".join(str(value) for value in unique_values[i]))
+        if unique_values[i] is None:
+            unique_values[i] = {}
+        unique_values[i] = sorted(unique_values[i], key=oneify)
+        valuesq[i] = map(latexify, unique_values[i])
+        values[i] = map(oneify, unique_values[i])
+        values[i] = sorted(set(values[i]), key=oneify)
+        print("Unique dimensions for ", i, "th red-good-word:", wordie)
+        print("\n".join(str(value) for value in values[i]))
+        print("Graded dimensions for ", i, "th red-good-word:", wordie)
+        print("\n".join(value for value in valuesq[i]))
+
+    # Process full unique values
     full_unique_values = set(x for i in range(len(red_good_words)) for x in unique_values[i])
-    full_values = [str(value) + " = " + str(value.evaluate_at_q1()) for value in full_unique_values if isinstance(value, LaurentPolynomial)] + \
-                [str(value) for value in full_unique_values if not isinstance(value, LaurentPolynomial)]
+    full_unique_values = sorted(full_unique_values, key=oneify)
+
+    full_values = map(oneify, full_unique_values)
+    full_values = sorted(set(full_values), key=oneify)
+    full_valuesq = map(latexify, full_unique_values)
+
     print("\nUnique values of characters:")
-    print("\n".join(full_values))
+    print(", ".join(str(value) for value in full_values))
+    print("\nGraded values of characters:")
+    print(", ".join(value for value in full_valuesq))
+
     file_name = f"results_{n}_vcounts_{v_count}.pkl"
     write_file(file_name, full_unique_values)  # Use write_file
+
     print("All done!")
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Compute characters of simple modules.")
-    parser.add_argument("mode", choices=["main", "main_parallel"], help="Mode to run the script in.")
+    parser.add_argument("mode", choices=["main", "main_parallel","print_unique_values"], help="Mode to run the script in.")
     parser.add_argument("n", type=int, help="Value of n.")
     parser.add_argument("v_counts", type=int, nargs="+", help="List of counts.")
 
     args = parser.parse_args()
-    while True:
-        if args.mode == "main":
-            main(args.n, args.v_counts)
-        elif args.mode == "main_parallel":
-            main_parallel(args.n, args.v_counts)
-        elif args.mode == "print_unique_values":
+
+    if args.mode == "print_unique_values":
             print_unique_values(args.n, args.v_counts)
+    else:
+        while True:
+            if args.mode == "main":
+                main(args.n, args.v_counts)
+            elif args.mode == "main_parallel":
+                main_parallel(args.n, args.v_counts)
 
