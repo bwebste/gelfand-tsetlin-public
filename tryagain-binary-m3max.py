@@ -189,28 +189,18 @@ def sync_to_server():
     """Sync the local directory to the remote server using rsync."""
     local_dir = "/Users/b2webste/b2webste"
     remote_dir = "b2webste@biglinux.math.uwaterloo.ca:/u/b2webste"
-    remote_dir2 = "b2webste@rsubmit.math.private.uwaterloo.ca:/work/b2webste"
 
     from_local_dir = "/Users/b2webste"
     from_remote_dir = "b2webste@biglinux.math.uwaterloo.ca:/u/b2webste/b2webste"
-    from_remote_dir2 = "b2webste@rsubmit.math.private.uwaterloo.ca:/work/b2webste/b2webste"
     try:
         print("Trying to sync to server...")
         subprocess.run(
             ["rsync", "-avz", local_dir, remote_dir],
             check=True
         )
-        subprocess.run(
-            ["rsync", "-avz",  local_dir, remote_dir2],
-            check=True
-        )
         print("Trying to sync from server...")
         subprocess.run(
             ["rsync", "-avz", "--exclude", "tryagain-binary*", from_remote_dir, from_local_dir],
-            check=True
-        )
-        subprocess.run(
-            ["rsync", "-avz", "--exclude", "tryagain-binary*", from_remote_dir2, from_local_dir],
             check=True
         )
         print("Sync completed successfully.")
@@ -400,9 +390,9 @@ def compute_one_simple_character(red_good_words, i, n):
     size = 50
     g = i / size
     for j in range(i, -1, -1):
+        maybe_char = read_file(file_name)
         if j % 100==0:
             sync_to_server()
-        maybe_char = read_file(file_name)
         if maybe_char is not None:
             print("Stopping in the middle, I already computed simple character for ", wordie)
             return maybe_char
@@ -424,7 +414,7 @@ def compute_one_simple_character(red_good_words, i, n):
     if not os.path.exists(backup_directory_name):
         os.makedirs(backup_directory_name)
     write_file(backup_file_name, current_char)
-    #sync_to_server()
+    sync_to_server()
     print("done computing simple character for ", wordie)
     write_file(file_name, current_char)
     return current_char
@@ -551,12 +541,26 @@ def main_parallel(n, v_counts):
         file_handle = f"unique_values_{wordie}_v_counts_{v_count}.pkl"  # Use .pkl for binary files
         char_file_handle = f"simple_character_{wordie}_v_counts_{v_count}.pkl"
         directory_name = f"_binary_{v_count}"
+        if not os.path.exists(directory_name):
+            os.makedirs(directory_name)
         file_name = os.path.join(directory_name, file_handle)
         char_file_name = os.path.join(directory_name, char_file_handle)
-        unique_values[i] = read_file(file_name)
-        if unique_values[i] is None or not os.path.exists(char_file_name):
-            j=i
-            break
+        if not os.path.exists(file_name): 
+            if os.path.exists(char_file_name):
+                current_char = read_file(char_file_name)
+                if current_char is not None:
+                    unique_values[i] = find_dimensions(current_char)
+                    write_file(file_name, unique_values[i]) 
+                else:
+                    j=i
+                    break
+            else:
+                j=i
+                break
+        else:
+            if not os.path.exists(char_file_name):
+                j=i
+                break
     print("----------------restarting with j=", j)
     time.sleep(1)
     with ProcessPoolExecutor(max_workers=10) as executor:
@@ -571,8 +575,6 @@ def main_parallel(n, v_counts):
                 file_handle = f"unique_values_{wordie}_v_counts_{v_count}.pkl"
                 directory_name = f"_binary_{v_count}"
                 file_name = os.path.join(directory_name, file_handle)
-                if not os.path.exists(directory_name):
-                    os.makedirs(directory_name)
                 if not os.path.exists(file_name):
                     unique_values[i] = find_dimensions(future.result())
                     print("done computing unique values for ", concatenate_word(red_good_words[i]))
@@ -650,31 +652,40 @@ def oneify(g):
     if isinstance(g, LaurentPolynomial):
         return g.evaluate_at_q1()
     else:
-        return int(g)
-
+        try:
+            m=int(g)
+            return m
+        except:
+            print("I'm not happy", g, "has type", type(g))
 def print_unique_values(n, v_count):
     red_good_words = generate_red_good_words(n, v_count, 0)
     unique_values = {}
     values = {}
     valuesq = {}
 
+    file_name = f"results_{n}_vcounts_{v_count}.pkl"
+   
     for i in range(len(red_good_words)):
         word = red_good_words[i]
         wordie = concatenate_word(word)
-        file_handle = f"unique_values_{wordie}_v_counts_{v_count}.pkl"
+        sub_file_handle = f"unique_values_{wordie}_v_counts_{v_count}.pkl"
         directory_name = f"_binary_{v_count}"
-        file_name = os.path.join(directory_name, file_handle)
-        unique_values[i] = read_file(file_name)
+        sub_file_name = os.path.join(directory_name, sub_file_handle)
+        unique_values[i] = read_file(sub_file_name)
         if unique_values[i] is None:
             unique_values[i] = {}
+        print(unique_values[i])
         unique_values[i] = sorted(unique_values[i], key=oneify)
         valuesq[i] = map(latexify, unique_values[i])
         values[i] = map(oneify, unique_values[i])
         values[i] = sorted(set(values[i]), key=oneify)
-        print("Unique dimensions for ", i, "th red-good-word:", wordie)
-        print("\n".join(str(value) for value in values[i]))
-        print("Graded dimensions for ", i, "th red-good-word:", wordie)
-        print("\n".join(value for value in valuesq[i]))
+        outs = f"Unique dimensions for {i}th red-good-word: {wordie}\n"
+        outs += "\n".join(str(value) for value in values[i]) + "\n"
+        outs += f"Graded dimensions for {i}th red-good-word: {wordie}\n"
+        outs += "\n".join(value for value in valuesq[i]) + "\n"
+        print(outs)
+        with open(file_name, "w") as f:
+            f.write(outs)
 
     # Process full unique values
     full_unique_values = set(x for i in range(len(red_good_words)) for x in unique_values[i])
@@ -684,13 +695,13 @@ def print_unique_values(n, v_count):
     full_values = sorted(set(full_values), key=oneify)
     full_valuesq = map(latexify, full_unique_values)
 
-    print("\nUnique values of characters:")
-    print(", ".join(str(value) for value in full_values))
-    print("\nGraded values of characters:")
-    print(", ".join(value for value in full_valuesq))
-
-    file_name = f"results_{n}_vcounts_{v_count}.pkl"
-    write_file(file_name, full_unique_values)  # Use write_file
+    outs = "\nUnique values of characters:\n"
+    outs += ", ".join(str(value) for value in full_values) + "\n"
+    outs += "\nGraded values of characters:\n"
+    outs += ", ".join(value for value in full_valuesq) + "\n"
+    print(outs)
+    with open(file_name, "w") as f:
+        f.write(outs)
 
     print("All done!")
 
