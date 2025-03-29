@@ -526,8 +526,10 @@ def read_file(file_name):
 
 def write_file(file_name, data):
     """Write data to a file using pickle."""
-    with open(file_name, "wb") as file:  # Use "wb" for writing binary files
+    tmp_file_name = file_name + ".tmp"
+    with open(tmp_file_name, "wb") as file:  # Use "wb" for writing binary files
         pickle.dump(data, file)  # Serialize the data
+    os.rename(tmp_file_name, file_name)  # Rename the temporary file to the original name
 
 def main_parallel(n, v_counts):
     sync_to_server()
