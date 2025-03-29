@@ -565,7 +565,7 @@ def main_parallel(n, v_counts):
                 break
     print("----------------restarting with j=", j)
     time.sleep(1)
-    with ProcessPoolExecutor(max_workers=10) as executor:
+    with ProcessPoolExecutor(max_workers=2) as executor:
         mini = min(j + 200, len(red_good_words))
         futures = [executor.submit(compute_one_simple_character, red_good_words, i, n) for i in range(j, mini)]
         for i, future in enumerate(futures):
