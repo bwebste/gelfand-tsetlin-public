@@ -380,6 +380,7 @@ def compute_one_simple_character(red_good_words, i, n):
     wordie = concatenate_word(word)
     v_count = [wordie.count(i) for i in range(1, n + 1)]
     file_handle = f"simple_character_{wordie}_v_counts_{v_count}.pkl"
+    tmp_file_handle = f"tmp_simple_character_{wordie}_v_counts_{v_count}.pkl"
     directory_name = f"_binary_{v_count}"
     file_name = os.path.join(directory_name, file_handle)
 
@@ -390,10 +391,15 @@ def compute_one_simple_character(red_good_words, i, n):
     if current_char is not None:
         print("already computed simple character for ", wordie)
         return current_char
-
-    print("computing standard character for ", wordie)
-    standard_char = compute_standard_character(gl_parts, glp_parts, n)
-    current_char = standard_char.copy()
+    tmp_file_name = os.path.join(directory_name, tmp_file_handle)
+    if os.path.exists(tmp_file_name):
+        print("already started computing simple character for ", wordie)
+        current_char = read_file(tmp_file_name)
+    if current_char is None or not os.path.exists(tmp_file_name):
+        print("computing standard character for ", wordie)
+        standard_char = compute_standard_character(gl_parts, glp_parts, n)
+        current_char = standard_char.copy()
+        print("done standard character for ", wordie)
 
     size = 50
     g = i / size
@@ -411,6 +417,9 @@ def compute_one_simple_character(red_good_words, i, n):
             print(i, " minus ", j, " ", lower_wordies)
             try:
                 current_char = closer_to_a_simple(current_char, red_good_words, n)
+                if j % 50 == 0:
+                    print("saving simple character for ", wordie)
+                    write_file(tmp_file_name, current_char)
             except RuntimeError as e:
                 print(f"Error: {e}")
                 raise RuntimeError(f"File {file_name} not found. Retrying...")
@@ -601,7 +610,6 @@ def main_parallel(n, v_counts):
     print("All done!")
 
 def main(n, v_counts):
-    sync_to_server()
     """Main function to compute all characters"""
     print(f"Computing characters for n={n} with counts {v_counts}")
     red_good_words = generate_red_good_words(n, v_counts, 0)

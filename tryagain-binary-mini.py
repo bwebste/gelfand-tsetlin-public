@@ -230,7 +230,13 @@ def check_for_file(file_name,v_counts):
     else:
         print("File ", new_file_name, " is empty or corrupted.")
         os.remove(new_file_name)
-        return False
+        try:
+            remote_command = f"ssh b2webste@biglinux.math.uwaterloo.ca 'rm {full_path}'"
+            subprocess.run(remote_command, shell=True, check=True)
+            print(f"Remote file {full_path} successfully deleted.")
+        except subprocess.CalledProcessError as e:
+            print(f"Error deleting remote file {full_path}: {e}")
+            return False
 
 def shuffle_words(word1, word2, n, degree=0):
     """Generate all possible shuffles of two words with their degrees"""
@@ -420,12 +426,14 @@ def compute_one_simple_character(red_good_words, i, n):
     size = 50
     g = i / size
     for j in range(i, -1, -1):
-        current_char = read_file(file_name)
-        if current_char is not None:
+        print("checking if I already have simple character for ", wordie)
+        maybe_char = read_file(file_name)
+        if maybe_char is not None:
             print("I already computed simple character for  ", wordie, "I'm stopping")
-            return current_char
+            return maybe_char
+        print("checking if I can get it from the server", wordie)
         maybe_char=check_for_file(file_handle, v_count)
-        if maybe_char is not False:
+        if maybe_char is not None and maybe_char is not False:
             print("I already computed simple character for  ", wordie, "I'm stopping")
             return maybe_char
         for k in range(size):
