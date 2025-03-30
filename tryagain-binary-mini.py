@@ -221,18 +221,16 @@ def check_for_file(file_name,v_counts):
     except:
         print(full_path, " not found")
         return False
-    try:
-        current_char=read_file(new_file_name)
-        if current_char is not None:
-            os.rename(new_file_name, new_file_name.replace(".tmp", ""))
-            new_file_name = new_file_name.replace(".tmp", "")
-            print("File ", new_file_name, " successfully read.")
-            return current_char
-    except:
-        print("Something wrong with ", new_file_name)
+    current_char=read_file(new_file_name)
+    if current_char is not None:
+        os.rename(new_file_name, new_file_name.replace(".tmp", ""))
+        new_file_name = new_file_name.replace(".tmp", "")
+        print("File ", new_file_name, " successfully read.")
+        return current_char
+    else:
+        print("File ", new_file_name, " is empty or corrupted.")
         os.remove(new_file_name)
         return False
-
 
 def shuffle_words(word1, word2, n, degree=0):
     """Generate all possible shuffles of two words with their degrees"""
@@ -413,7 +411,8 @@ def compute_one_simple_character(red_good_words, i, n):
     if maybe_char is not False:
         print("already computed simple character for  ", wordie)
         return maybe_char
-
+    else:
+        print("Need to compute simple character for ", wordie)
     print("computing standard character for ", wordie)
     standard_char = compute_standard_character(gl_parts, glp_parts, n)
     current_char = standard_char.copy()
@@ -424,11 +423,11 @@ def compute_one_simple_character(red_good_words, i, n):
         current_char = read_file(file_name)
         if current_char is not None:
             print("I already computed simple character for  ", wordie, "I'm stopping")
-        return current_char
+            return current_char
         maybe_char=check_for_file(file_handle, v_count)
         if maybe_char is not False:
             print("I already computed simple character for  ", wordie, "I'm stopping")
-        return maybe_char
+            return maybe_char
         for k in range(size):
             if i - j == int(k * g):
                 print(i, ": [", k * ".", (size - k) * " ", "]", time.strftime("%H:%M:%S", time.localtime()))
