@@ -198,14 +198,41 @@ def sync_to_server():
             ["rsync", "-avz", local_dir, remote_dir],
             check=True
         )
-        print("Trying to sync from server...")
-        subprocess.run(
-            ["rsync", "-avz", "--exclude", "tryagain-binary*", from_remote_dir, from_local_dir],
-            check=True
-        )
+        # print("Trying to sync from server...")
+        # subprocess.run(
+        #     ["rsync", "-avz", "--exclude", "tryagain-binary*", from_remote_dir, from_local_dir],
+        #     check=True
+        # )
         print("Sync completed successfully.")
     except subprocess.CalledProcessError as e:
         print(f"Error during sync: {e}")
+
+def check_for_file(file_name,v_counts):
+    local_dir = "/Users/benwebster/b2webste/_binary_" + str(v_counts)
+    remote_dir = "b2webste@biglinux.math.uwaterloo.ca:/u/b2webste/b2webste/_binary_" + str(v_counts)
+    full_path = remote_dir + "/" + file_name
+    new_file_name = local_dir + "/" + file_name+".tmp"
+    #print("full_path is", full_path, "new_file_name is", new_file_name)
+    try: 
+        command = ["scp", full_path, new_file_name]
+        #print(" ".join(command))
+        subprocess.run(command, check=True)
+        print("File ", new_file_name, " gotten from server.")
+    except:
+        print(full_path, " not found")
+        return False
+    try:
+        current_char=read_file(new_file_name)
+        if current_char is not None:
+            os.rename(new_file_name, new_file_name.replace(".tmp", ""))
+            new_file_name = new_file_name.replace(".tmp", "")
+            print("File ", new_file_name, " successfully read.")
+            return current_char
+    except:
+        print("Something wrong with ", new_file_name)
+        os.remove(new_file_name)
+        return False
+
 
 def shuffle_words(word1, word2, n, degree=0):
     """Generate all possible shuffles of two words with their degrees"""
@@ -382,6 +409,10 @@ def compute_one_simple_character(red_good_words, i, n):
     if current_char is not None:
         print("already computed simple character for ", wordie)
         return current_char
+    maybe_char=check_for_file(file_handle, v_count)
+    if maybe_char is not False:
+        print("already computed simple character for  ", wordie)
+        return maybe_char
 
     print("computing standard character for ", wordie)
     standard_char = compute_standard_character(gl_parts, glp_parts, n)
@@ -390,12 +421,14 @@ def compute_one_simple_character(red_good_words, i, n):
     size = 50
     g = i / size
     for j in range(i, -1, -1):
-        maybe_char = read_file(file_name)
-        if j % 100==0:
-            sync_to_server()
-        if maybe_char is not None:
-            print("Stopping in the middle, I already computed simple character for ", wordie)
-            return maybe_char
+        current_char = read_file(file_name)
+        if current_char is not None:
+            print("I already computed simple character for  ", wordie, "I'm stopping")
+        return current_char
+        maybe_char=check_for_file(file_handle, v_count)
+        if maybe_char is not False:
+            print("I already computed simple character for  ", wordie, "I'm stopping")
+        return maybe_char
         for k in range(size):
             if i - j == int(k * g):
                 print(i, ": [", k * ".", (size - k) * " ", "]", time.strftime("%H:%M:%S", time.localtime()))
@@ -532,7 +565,6 @@ def write_file(file_name, data):
     os.rename(tmp_file_name, file_name)  # Rename the temporary file to the original name
 
 def main_parallel(n, v_counts):
-    sync_to_server()
     red_good_words = generate_red_good_words(n, v_counts, 0)
     unique_values = {}
     j=0
@@ -547,13 +579,16 @@ def main_parallel(n, v_counts):
             os.makedirs(directory_name)
         file_name = os.path.join(directory_name, file_handle)
         char_file_name = os.path.join(directory_name, char_file_handle)
-        if not os.path.exists(file_name): 
+        if not os.path.exists(file_name):
+            print("File ", file_name, " not found. Can I make it from ", char_file_name, "?")
             if os.path.exists(char_file_name):
+                print("File ", char_file_name, " found. Reading...")
                 current_char = read_file(char_file_name)
                 if current_char is not None:
                     unique_values[i] = find_dimensions(current_char)
-                    write_file(file_name, unique_values[i]) 
+                    write_file(file_name, unique_values[i])
                 else:
+                    print("File ", char_file_name, " is empty or corrupted.")
                     j=i
                     break
             else:
@@ -561,10 +596,10 @@ def main_parallel(n, v_counts):
                 break
         else:
             if not os.path.exists(char_file_name):
+                print("Huh, ", file_name, "exists, but ", char_file_name, " not found. Let's go.")
                 j=i
                 break
     print("----------------restarting with j=", j)
-    time.sleep(1)
     with ProcessPoolExecutor(max_workers=2) as executor:
         mini = min(j + 200, len(red_good_words))
         futures = [executor.submit(compute_one_simple_character, red_good_words, i, n) for i in range(j, mini)]
@@ -595,7 +630,6 @@ def main_parallel(n, v_counts):
     print("All done!")
 
 def main(n, v_counts):
-    sync_to_server()
     """Main function to compute all characters"""
     print(f"Computing characters for n={n} with counts {v_counts}")
     red_good_words = generate_red_good_words(n, v_counts, 0)
