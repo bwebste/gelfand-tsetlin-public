@@ -191,10 +191,10 @@ import subprocess
 
 def sync_to_server():
     """Sync the local directory to the remote server using rsync."""
-    local_dir = "/Users/b2webste/b2webste"
+    local_dir = "/Users/benwebster/b2webste"
     remote_dir = "b2webste@biglinux.math.uwaterloo.ca:/u/b2webste"
 
-    from_local_dir = "/Users/b2webste"
+    from_local_dir = "/Users/benwebster"
     from_remote_dir = "b2webste@biglinux.math.uwaterloo.ca:/u/b2webste/b2webste"
     try:
         print("Trying to sync to server...")
@@ -212,7 +212,7 @@ def sync_to_server():
         print(f"Error during sync: {e}")
 
 def check_for_file(file_name,v_counts):
-    local_dir = "/Users/b2webste/b2webste/_binary_" + str(v_counts)
+    local_dir = "/Users/benwebster/b2webste/_binary_" + str(v_counts)
     remote_dir = "b2webste@biglinux.math.uwaterloo.ca:/u/b2webste/b2webste/_binary_" + str(v_counts)
     full_path = remote_dir + "/" + file_name
     new_file_name = local_dir + "/" + file_name+".tmp"
@@ -625,7 +625,7 @@ def main_parallel(n, v_counts):
                 break
     print("----------------restarting with j=", j)
     with ProcessPoolExecutor(max_workers=10) as executor:
-        mini = min(j + 600, len(red_good_words))
+        mini = min(j + 100, len(red_good_words))
         futures = [executor.submit(compute_one_simple_character, red_good_words, i, n) for i in range(j, mini)]
         for i, future in enumerate(futures):
             word = red_good_words[i + j]
@@ -692,8 +692,8 @@ def main(n, v_counts):
         print("done computing unique values for ", concatenate_word(red_good_words[j]))
         write_file(file_name, unique_values[j])
         print("wrote unique values for ", wordie)
-        P = Process(target=sync_to_server, args=())
-        P.start()
+        # P = Process(target=sync_to_server, args=())
+        # P.start()
     except Exception as e:
         print(f"Didn't work to process {file_name}, guess I'll try again: {e}")
 
@@ -727,8 +727,8 @@ def skip_to(n, j, v_counts):
             print("done computing unique values for ", wordie)
             write_file(file_name, unique_values[i])
             print("wrote unique values for ", wordie)
-            P = Process(target=sync_to_server, args=())
-            P.start()
+            # P = Process(target=sync_to_server, args=())
+            # P.start()
         except Exception as e:
             print(f"Didn't work to process {file_name}, guess I'll try again: {e}")
 def latexify(g):
@@ -922,18 +922,18 @@ async def monitor_progress(queue, progress, task_ids):
 async def main_parallel_async(n, v_counts, skip=0):
     semaphore = asyncio.Semaphore(5) 
     """Asynchronous version of main_parallel."""
-    def schedule_sync_to_server():
-        """Schedule sync_to_server to run every hour."""
-        def sync_task():
-            while True:
-                sync_to_server()
-                time.sleep(3600)  # Wait for 1 hour (3600 seconds)
+    # def schedule_sync_to_server():
+    #     """Schedule sync_to_server to run every hour."""
+    #     def sync_task():
+    #         while True:
+    #             sync_to_server()
+    #             time.sleep(3600)  # Wait for 1 hour (3600 seconds)
 
-        sync_thread = threading.Thread(target=sync_task, daemon=True)
-        sync_thread.start()
+    #     sync_thread = threading.Thread(target=sync_task, daemon=True)
+    #     sync_thread.start()
 
-    # Start the sync process
-    schedule_sync_to_server()
+    # # Start the sync process
+    # schedule_sync_to_server()
     red_good_words = generate_red_good_words(n, v_counts, 0)
     unique_values = {}
     tasks = []
@@ -954,7 +954,7 @@ async def main_parallel_async(n, v_counts, skip=0):
     print("j=",j)
     start_time=time.time()
     with Progress() as progress:
-        mini=min(j + skip + 1000, len(red_good_words))
+        mini=min(j + skip + 100, len(red_good_words))
         task_ids = {}
         with Manager() as manager:  # Use Manager to create a shared queue
             queue = manager.Queue()
@@ -986,7 +986,7 @@ async def main_parallel_async(n, v_counts, skip=0):
 #             print(f"{i} has a semaphore")
 #             await asyncio.sleep(5)
 
-async def async_compute_one_simple_character(red_good_words, i, n, executor, semaphore, retries=1000, delay=3600):
+async def async_compute_one_simple_character(red_good_words, i, n, executor, semaphore, retries=10, delay=120):
     """Asynchronous wrapper for compute_one_character_in_process with retry logic."""
     loop = asyncio.get_running_loop()
     attempt = 1

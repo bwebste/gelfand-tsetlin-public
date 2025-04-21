@@ -7,6 +7,11 @@ import os
 import time
 import resource
 import pickle
+from multiprocessing import Process
+from rich.progress import Progress
+from multiprocessing import Queue
+from multiprocessing import Manager
+
 
 class LaurentPolynomial:
     """Represents a Laurent polynomial in q with integer coefficients"""
@@ -185,35 +190,49 @@ def generate_red_good_words(n, v_counts, k):
     return sorted(result, key=concatenate_word, reverse=True)
 import subprocess
 
-#def sync_to_server():
-    # remote_dir = "b2webste@biglinux.math.uwaterloo.ca:/u/b2webste"
-    # remote_dir2 = "b2webste@rsubmit.math.private.uwaterloo.ca:/work/b2webste"
+def check_for_file(file_name,v_counts):
+    local_dir = "/Users/b2webste/b2webste/_binary_" + str(v_counts)
+    remote_dir = "b2webste@biglinux.math.uwaterloo.ca:/u/b2webste/b2webste/_binary_" + str(v_counts)
+    full_path = remote_dir + "/" + file_name
+    new_file_name = local_dir + "/" + file_name+".tmp"
+    #print("full_path is", full_path, "new_file_name is", new_file_name)
+    try: 
+        command = ["scp", full_path, new_file_name]
+        #print(" ".join(command))
+        subprocess.run(command, check=True)
+        print("File ", new_file_name, " gotten from server.")
+    except:
+        #print(full_path, " not found")
+        return False
+    current_char=read_file(new_file_name)
+    if current_char is not None:
+        os.rename(new_file_name, new_file_name.replace(".tmp", ""))
+        new_file_name = new_file_name.replace(".tmp", "")
+        print("File ", new_file_name, " successfully read.")
+        return current_char
+    else:
+        print("File ", new_file_name, " is empty or corrupted.")
+        os.remove(new_file_name)
+        try:
+            remote_command = f"ssh b2webste@biglinux.math.uwaterloo.ca 'rm {full_path}'"
+            subprocess.run(remote_command, shell=True, check=True)
+            print(f"Remote file {full_path} successfully deleted.")
+        except subprocess.CalledProcessError as e:
+            print(f"Error deleting remote file {full_path}: {e}")
+            return False
 
-    # from_local_dir = "/Users/b2webste"
-    # from_remote_dir = "b2webste@biglinux.math.uwaterloo.ca:/u/b2webste/b2webste"
-    # from_remote_dir2 = "b2webste@rsubmit.math.private.uwaterloo.ca:/u/b2webste/b2webste"
-    # try:
-    #     print("Trying to sync to server...")
-    #     subprocess.run(
-    #         ["rsync", "-avz", local_dir, remote_dir],
-    #         check=True
-    #     )
-    #     subprocess.run(
-    #         ["rsync", "-avz", local_dir, remote_dir2],
-    #         check=True
-    #     )
-    #     print("Trying to sync from server...")
-    #     subprocess.run(
-    #         ["rsync", "-avz", from_remote_dir, from_local_dir],
-    #         check=True
-    #     )
-    #     subprocess.run(
-    #         ["rsync", "-avz", from_remote_dir2, from_local_dir],
-    #         check=True
-    #     )
-    #     print("Sync completed successfully.")
-    # except subprocess.CalledProcessError as e:
-    #     print(f"Error during sync: {e}")
+def push_to_server(file_name, v_counts):
+    local_dir = "/Users/benwebster/b2webste/_binary_" + str(v_counts)
+    remote_dir = "b2webste@biglinux.math.uwaterloo.ca:/u/b2webste/b2webste/_binary_" + str(v_counts)
+    full_path = remote_dir + "/" + file_name
+    new_file_name = local_dir + "/" + file_name
+    try:
+        command = ["scp", new_file_name, full_path]
+        subprocess.run(command, check=True)
+        print("File ", new_file_name, " pushed to server.")
+    except subprocess.CalledProcessError as e:
+        print(f"Error during file transfer: {e}")
+        return False
 
 def shuffle_words(word1, word2, n, degree=0):
     """Generate all possible shuffles of two words with their degrees"""
@@ -244,7 +263,7 @@ def shuffle_generator(generator, word2, n):
     for word1, degree in generator:
         #print("word1=",word1," word2=",word2)
         for shuffled, new_degree in shuffle_words(word1, word2, n, degree):
-            yield shuffled, new_degree
+            yield [shuffled, new_degree]
 
 def shuffle_dicts(dict1, dict2,n):
     """Shuffle two dictionaries"""
@@ -340,7 +359,7 @@ def closer_to_a_simple(current_char, red_good_words, n):
             file_name = os.path.join(directory_name, file_handle)
 
             if not os.path.exists(file_name):
-                print(f"File {file_name} not found. Retrying...")
+                #print(f"File {file_name} not found. Retrying...")
                 raise RuntimeError(f"File {file_name} not found.")
 
             lower_char = read_file(file_name)
@@ -373,8 +392,10 @@ def closer_to_a_simple(current_char, red_good_words, n):
             return current_char
     return current_char
 
-def compute_one_simple_character(red_good_words, i, n):
-    """Compute the character of a simple module"""
+def compute_one_simple_character(red_good_words, i, n, queue=None):
+    """Compute the character of a simple module with progress tracking."""
+    print(f"computing for {i}")
+
     word = red_good_words[i]
     gl_parts, glp_parts = word
     wordie = concatenate_word(word)
@@ -389,53 +410,41 @@ def compute_one_simple_character(red_good_words, i, n):
 
     current_char = read_file(file_name)
     if current_char is not None:
-        print("already computed simple character for ", wordie)
         return current_char
+
     tmp_file_name = os.path.join(directory_name, tmp_file_handle)
     if os.path.exists(tmp_file_name):
-        print("already started computing simple character for ", wordie)
         current_char = read_file(tmp_file_name)
     if current_char is None or not os.path.exists(tmp_file_name):
-        print("computing standard character for ", wordie)
         standard_char = compute_standard_character(gl_parts, glp_parts, n)
         current_char = standard_char.copy()
-        print("done standard character for ", wordie)
+        write_file(tmp_file_name, current_char)
 
-    size = 50
-    g = i / size
+    start_time = time.time()
     for j in range(i, -1, -1):
         maybe_char = read_file(file_name)
         if maybe_char is not None:
-            print("Stopping in the middle, I already computed simple character for ", wordie)
             return maybe_char
-        for k in range(size):
-            if i - j == int(k * g):
-                print(i, ": [", k * ".", (size - k) * " ", "]", time.strftime("%H:%M:%S", time.localtime()))
+        queue.put((i, j))
+        if j % 100 == 0:
+            print(f"sending queue.put(({i}, {j}))")
+        if r >400 or (time.time() - start_time) >= 1800:
+            start_time = time.time() 
+            print("saving simple character for ", i, "r=", r,time.strftime("%H:%M:%S", time.localtime()))
+            P=Process(target=write_file, args=(tmp_file_name, current_char))
+            P.start()
+            r=1
         lower_word = red_good_words[j]
         lower_wordies = concatenate_word(lower_word)
         if not is_bar_invariant(current_char[lower_wordies]):
-            print(i, " minus ", j, " ", lower_wordies)
-            try:
-                current_char = closer_to_a_simple(current_char, red_good_words, n)
-                if j % 50 == 0:
-                    print("saving simple character for ", wordie)
-                    write_file(tmp_file_name, current_char)
-            except RuntimeError as e:
-                print(f"Error: {e}")
-                raise RuntimeError(f"File {file_name} not found. Retrying...")
-    backup_file_handle = f"simple_character_{wordie}_v_counts_{v_count}.pkl"
-    backup_directory_name = f"_backup_{v_count}"
-    backup_file_name = os.path.join(backup_directory_name, backup_file_handle)
-    if not os.path.exists(backup_directory_name):
-        os.makedirs(backup_directory_name)
-    write_file(backup_file_name, current_char)
-    #sync_to_server()
-    print("done computing simple character for ", wordie)
+            r+=1
+            #print(i, " minus ", j, " ", lower_wordies, "r=", r, "time since last save", int(time.time() - start_time))
+            current_char = closer_to_a_simple(current_char, red_good_words, n)
     write_file(file_name, current_char)
     return current_char
 
 def compute_simple_characters(standard_chars,red_good_words):
-    set_memory_limit(500 * 1024 * 1024) 
+    #set_memory_limit(500 * 1024 * 1024) 
     """Compute characters of simple modules"""
     simple_chars = {}
     words = sorted(standard_chars.keys())
@@ -523,10 +532,10 @@ def find_dimensions(simple_char):
     unique_values = set(flattened_values)
     return unique_values
 
-def set_memory_limit(max_memory):
-    """Set the maximum memory limit for the current process."""
-    soft, hard = resource.getrlimit(resource.RLIMIT_AS)
-    resource.setrlimit(resource.RLIMIT_AS, (max_memory, hard))
+# def set_memory_limit(max_memory):
+#     """Set the maximum memory limit for the current process."""
+#     soft, hard = resource.getrlimit(resource.RLIMIT_AS)
+#     resource.setrlimit(resource.RLIMIT_AS, (max_memory, hard))
 
 def read_file(file_name):
     """Read the content of a file using pickle and return it."""
@@ -545,9 +554,10 @@ def write_file(file_name, data):
     with open(tmp_file_name, "wb") as file:  # Use "wb" for writing binary files
         pickle.dump(data, file)  # Serialize the data
     os.rename(tmp_file_name, file_name)  # Rename the temporary file to the original name
+    #print(file_name, "saved", time.strftime("%H:%M:%S", time.localtime()))
+
 
 def main_parallel(n, v_counts):
-    #sync_to_server()
     red_good_words = generate_red_good_words(n, v_counts, 0)
     unique_values = {}
     j=0
@@ -562,13 +572,16 @@ def main_parallel(n, v_counts):
             os.makedirs(directory_name)
         file_name = os.path.join(directory_name, file_handle)
         char_file_name = os.path.join(directory_name, char_file_handle)
-        if not os.path.exists(file_name): 
+        if not os.path.exists(file_name):
+            print("File ", file_name, " not found. Can I make it from ", char_file_name, "?")
             if os.path.exists(char_file_name):
+                print("File ", char_file_name, " found. Reading...")
                 current_char = read_file(char_file_name)
                 if current_char is not None:
                     unique_values[i] = find_dimensions(current_char)
-                    write_file(file_name, unique_values[i]) 
+                    write_file(file_name, unique_values[i])
                 else:
+                    print("File ", char_file_name, " is empty or corrupted.")
                     j=i
                     break
             else:
@@ -576,17 +589,17 @@ def main_parallel(n, v_counts):
                 break
         else:
             if not os.path.exists(char_file_name):
+                print("Huh, ", file_name, "exists, but ", char_file_name, " not found. Let's go.")
                 j=i
                 break
     print("----------------restarting with j=", j)
-    time.sleep(1)
-    with ProcessPoolExecutor(max_workers=14) as executor:
-        mini = min(j + 400, len(red_good_words))
+    with ProcessPoolExecutor(max_workers=10) as executor:
+        mini = min(j + 600, len(red_good_words))
         futures = [executor.submit(compute_one_simple_character, red_good_words, i, n) for i in range(j, mini)]
         for i, future in enumerate(futures):
             word = red_good_words[i + j]
             wordie = concatenate_word(word)
-            print("doing ", i, "th red-good-word:", wordie)
+            #print("doing ", i, "th red-good-word:", wordie)
             try:
                 v_count = [wordie.count(i) for i in range(1, n + 1)]
                 file_handle = f"unique_values_{wordie}_v_counts_{v_count}.pkl"
@@ -610,6 +623,7 @@ def main_parallel(n, v_counts):
     print("All done!")
 
 def main(n, v_counts):
+
     """Main function to compute all characters"""
     print(f"Computing characters for n={n} with counts {v_counts}")
     red_good_words = generate_red_good_words(n, v_counts, 0)
@@ -658,7 +672,29 @@ def main(n, v_counts):
     # file_name = f"results_{n}_vcounts_{v_counts}.pkl"
     # write_file(file_name, full_unique_values)
     print("On to the next one!")
+def skip_to(n, j, v_counts):
+    """Skip to a specific index in the computation"""
+    red_good_words = generate_red_good_words(n, v_counts, 0)
+    word = red_good_words[j]
+    wordie = concatenate_word(word)
+    file_handle = f"unique_values_{wordie}_v_counts_{v_counts}.pkl"
+    directory_name = f"_binary_{v_counts}"
+    file_name = os.path.join(directory_name, file_handle)
+    unique_values={}
+    if not os.path.exists(directory_name):
+        os.makedirs(directory_name)
+    for i in range(j, len(red_good_words)):
 
+        word = red_good_words[i]
+        wordie = concatenate_word(word)
+        print("doing ", i, "th red-good-word:", wordie)
+        try:
+            unique_values[i] = find_dimensions(compute_one_simple_character(red_good_words, i, n))
+            print("done computing unique values for ", wordie)
+            write_file(file_name, unique_values[i])
+            print("wrote unique values for ", wordie)
+        except Exception as e:
+            print(f"Didn't work to process {file_name}, guess I'll try again: {e}")
 def latexify(g):
     if isinstance(g, LaurentPolynomial):
         return g.latex()
@@ -673,35 +709,81 @@ def oneify(g):
             return m
         except:
             print("I'm not happy", g, "has type", type(g))
+            raise ValueError(f"this one is bad")
+from sympy import factorint
+
+def return_power(prime,exp):
+    if exp==1:
+        return f"{prime}"
+    else:
+        return f"{prime}^{exp}" 
+
+def display_factors(k):
+    fact = str(k)+" = "
+    dict = factorint(k)
+
+    fact += " \cdot ".join(return_power(prime,exp) for prime, exp in dict.items())+"\n"
+    return fact
+
+import matplotlib.pyplot as plt
+
+def sort_unique_values(input):
+        i,sub_file_name,char_file_name,red_good_words,n = input
+        unique_values_list = read_file(sub_file_name)
+        if unique_values_list is None:
+            unique_values_list = {}
+        try: 
+            unique_values_list = sorted(unique_values_list, key=oneify)
+        except Exception as e:
+            print(f"Error processing {i}, let's try again: {e}")
+            if os.path.exists(char_file_name):
+                unique_values_list = find_dimensions(compute_one_simple_character(red_good_words, i, n))
+                print(f"{i}: ", str(unique_values_list))
+                write_file(sub_file_name, unique_values_list)  # Use write_file
+                print("wrote unique values for word", i)
+            else:
+                unique_values_list = {}
+            unique_values_list = sorted(unique_values[i], key=oneify)
+        return i, unique_values_list
+  
 def print_unique_values(n, v_count):
     red_good_words = generate_red_good_words(n, v_count, 0)
     unique_values = {}
     values = {}
     valuesq = {}
+    maxes ={}
 
     file_name = f"results_{n}_vcounts_{v_count}.pkl"
-   
-    for i in range(len(red_good_words)):
-        word = red_good_words[i]
-        wordie = concatenate_word(word)
-        sub_file_handle = f"unique_values_{wordie}_v_counts_{v_count}.pkl"
-        directory_name = f"_binary_{v_count}"
-        sub_file_name = os.path.join(directory_name, sub_file_handle)
-        unique_values[i] = read_file(sub_file_name)
-        if unique_values[i] is None:
-            unique_values[i] = {}
-        print(unique_values[i])
-        unique_values[i] = sorted(unique_values[i], key=oneify)
-        valuesq[i] = map(latexify, unique_values[i])
-        values[i] = map(oneify, unique_values[i])
-        values[i] = sorted(set(values[i]), key=oneify)
-        outs = f"Unique dimensions for {i}th red-good-word: {wordie}\n"
-        outs += "\n".join(str(value) for value in values[i]) + "\n"
-        outs += f"Graded dimensions for {i}th red-good-word: {wordie}\n"
-        outs += "\n".join(value for value in valuesq[i]) + "\n"
-        print(outs)
-        with open(file_name, "w") as f:
-            f.write(outs)
+    futures = []
+    with ProcessPoolExecutor(max_workers=30) as executor:
+        for i in range(len(red_good_words)):
+            word = red_good_words[i]
+            wordie = concatenate_word(word)
+            sub_file_handle = f"unique_values_{wordie}_v_counts_{v_count}.pkl"
+            directory_name = f"_binary_{v_count}"
+            sub_file_name = os.path.join(directory_name, sub_file_handle)
+            char_file_handle = f"simple_character_{wordie}_v_counts_{v_count}.pkl"
+            char_file_name = os.path.join(directory_name, char_file_handle)
+            futures.append(executor.submit(sort_unique_values,(i,sub_file_name,char_file_name,red_good_words,n)))
+        for i, future in enumerate(futures):
+            print(f"trying with {i}")
+            try:
+                i, unique_values[i] = future.result()
+                valuesq[i] = map(latexify, unique_values[i])
+                values[i] = map(oneify, unique_values[i])
+                maxes[i] = max(values[i])
+            except Exception as e:
+                print(f"Error processing {i}: {e}")
+                unique_values[i] = {}
+
+
+        # outs = f"Unique dimensions for {i}th red-good-word: {wordie}\n"
+        # outs += "\n".join(str(value) for value in values[i]) + "\n"
+        # outs += f"Graded dimensions for {i}th red-good-word: {wordie}\n"
+        # outs += "\n".join(value for value in valuesq[i]) + "\n"
+        # print(outs)
+        # with open(file_name, "w") as f:
+        #     f.write(outs)
 
     # Process full unique values
     full_unique_values = set(x for i in range(len(red_good_words)) for x in unique_values[i])
@@ -711,30 +793,216 @@ def print_unique_values(n, v_count):
     full_values = sorted(set(full_values), key=oneify)
     full_valuesq = map(latexify, full_unique_values)
 
+    plt.hist(maxes.values(), bins=100)
+    plt.xlabel("Max value")
+    plt.ylabel("Number of simples")
+    plt.title("Histogram of maximum values of simple characters")
+    plt.savefig(f"histogram_max_values_{n}_vcounts_{v_count}.png")
+    plt.close()
+
     outs = "\nUnique values of characters:\n"
-    outs += ", ".join(str(value) for value in full_values) + "\n"
+    outs += ", ".join(display_factors(value) for value in full_values) + "\n"
     outs += "\nGraded values of characters:\n"
     outs += ", ".join(value for value in full_valuesq) + "\n"
     print(outs)
     with open(file_name, "w") as f:
         f.write(outs)
+    
 
     print("All done!")
 
+import asyncio
+import threading
+
+def compute_one_character_in_process(inputs):
+    """Compute one character in a separate process."""
+    red_good_words, i, n, attempt,queue = inputs
+    #print("Computing character in process for ", i, "attempt", attempt)
+#    try:
+    return compute_one_simple_character(red_good_words, i, n,queue)
+    # except Exception as e:
+    #     print(f"Error processing {i}: {e}")
+    #     raise ValueError(f"Does having a ValueError help?  File for {i} not found in compute_one_character_in_process. Will try again.")
+    #     raise RuntimeError(f"File for {i} not found in compute_one_character_in_process. Will try again.")
+
+def print_semaphore_status(semaphore, label="Semaphore Status"):
+    """Print the current state of the semaphore."""
+    print(f"{label}: Available permits = {semaphore._value}")
+
+async def process_word_async_with_throttle(red_good_words, i, n, executor, semaphore,start_time,j,queue):
+    #async with semaphore:  # Limit concurrency
+    # if time.time() - start_time <= 120:
+    #     wait = (i - j) 
+    #     await asyncio.sleep(wait)  # Add 'await' here
+    word = red_good_words[i]
+    wordie = concatenate_word(word)
+    v_count = [wordie.count(i) for i in range(1, n + 1)]
+    file_handle = f"unique_values_{wordie}_v_counts_{v_count}.pkl"
+    char_file_handle = f"simple_character_{wordie}_v_counts_{v_count}.pkl"
+    directory_name = f"_binary_{v_count}"
+    file_name = os.path.join(directory_name, file_handle)
+    char_file_name = os.path.join(directory_name, char_file_handle)
+
+    await asyncio.to_thread(os.makedirs, directory_name, exist_ok=True)
+
+    if not os.path.exists(char_file_name):
+        current_char = await async_compute_one_simple_character(red_good_words, i, n, executor, semaphore,queue)
+        dimensions = find_dimensions(current_char)
+        await asyncio.to_thread(write_file, file_name, dimensions)
+        print("Wrote unique values for", wordie)
+    else:
+        if os.path.exists(file_name):
+            dimensions = await asyncio.to_thread(read_file, file_name)
+        else:
+            current_char = await asyncio.to_thread(read_file, char_file_name)
+            if current_char is not None:
+                dimensions = find_dimensions(current_char)
+                await asyncio.to_thread(write_file, file_name, dimensions)
+            else:
+                print("File", char_file_name, "is empty or corrupted.")
+    queue.put((i, "done"))
+    print("Done with", i, "th red-good-word:", wordie)
+
+async def monitor_progress(queue, progress, task_ids):
+    """Monitor the queue for progress updates and update the progress bars."""
+    current_tasks = []
+    while True:
+        try:
+            i, j = queue.get_nowait()  # Non-blocking queue read
+            #print(f"receiving queue.put(({i}, {j}))")
+            progress.update(task_ids[i], advance=1)
+            if i > j+1 and i not in current_tasks:
+                current_tasks.insert(0, i)
+                progress.update(task_ids[i], visible=True)
+                if len(current_tasks)>10:
+                    for k in current_tasks[10:]:
+                        current_tasks.remove(k)
+                        progress.update(task_ids[k], visible=False)
+                print(current_tasks)
+            # if j == "done":
+            #     progress.remove_task(task_ids[i])
+        except Exception:
+            await asyncio.sleep(.1)  # Sleep briefly to avoid busy-waiting
+
+async def main_parallel_async(n, v_counts, skip=0):
+    semaphore = asyncio.Semaphore(20) 
+    """Asynchronous version of main_parallel."""
+    red_good_words = generate_red_good_words(n, v_counts, 0)
+    unique_values = {}
+    tasks = []
+    j=0
+    for i in range(len(red_good_words)):
+        word = red_good_words[i]
+        wordie = concatenate_word(word)
+        v_count = [wordie.count(i) for i in range(1, n + 1)]
+        file_handle = f"unique_values_{wordie}_v_counts_{v_count}.pkl"
+        char_file_handle = f"simple_character_{wordie}_v_counts_{v_count}.pkl"
+        directory_name = f"_binary_{v_count}"
+        file_name = os.path.join(directory_name, file_handle)
+        char_file_name = os.path.join(directory_name, char_file_handle)
+        unique_values[i] = read_file(file_name)
+        if unique_values[i] is None or not os.path.exists(char_file_name):
+            j=i
+            break
+    print("j=",j)
+    start_time=time.time()
+    with Progress() as progress:
+        mini=min(j + skip + 1000, len(red_good_words))
+        task_ids = {}
+        with Manager() as manager:  # Use Manager to create a shared queue
+            queue = manager.Queue()
+            with ProcessPoolExecutor() as executor:
+                for i in range(j, mini):
+                    task_ids[i] = progress.add_task(f"[cyan]Processing word {i}", total=i, visible=False)
+                    tasks.append(
+                        process_word_async_with_throttle(
+                            red_good_words, i, n, executor, semaphore, start_time, j, queue
+                        )
+                    )
+                await asyncio.gather(
+                    asyncio.gather(*tasks, return_exceptions=True),  # Worker tasks
+                    monitor_progress(queue, progress, task_ids)     # Monitor progress
+                )
+
+    # Process full unique values if all tasks are completed
+    # full_unique_values = set(x for i in range(len(red_good_words)) for x in unique_values.get(i, []))
+    # print("\nUnique values of characters:")
+    # values = [str(value) + " = " + str(value.evaluate_at_q1()) for value in full_unique_values if isinstance(value, LaurentPolynomial)] + \
+    #          [str(value) for value in full_unique_values if not isinstance(value, LaurentPolynomial)]
+    # print("\n".join(values))
+    # file_name = f"results_{n}_vcounts_{v_counts}.pkl"
+    # await asyncio.to_thread(write_file, file_name, full_unique_values)
+    print("All done!")
+
+# async def background_task(i):
+#         while True:
+#             print(f"{i} has a semaphore")
+#             await asyncio.sleep(5)
+
+async def async_compute_one_simple_character(red_good_words, i, n, executor, semaphore, queue, retries=50, delay=60):
+    """Asynchronous wrapper for compute_one_character_in_process with retry logic."""
+    loop = asyncio.get_running_loop()
+    attempt = 1
+    
+    while attempt <= retries:
+        print(f"Attempt {attempt} for word {i}")
+        
+        if attempt > 1:
+            print(f"Waiting {delay} seconds before retry...")
+            await asyncio.sleep(delay)
+        
+        try:
+            async with semaphore:  # This properly handles acquire and release
+                print_semaphore_status(semaphore, f"After getting semaphore for word {i}, attempt {attempt}")
+                
+                result = await loop.run_in_executor(
+                    executor, 
+                    compute_one_character_in_process, 
+                    (red_good_words, i, n, attempt,queue)
+                )
+                
+                print(f"Successfully processed word {i} on attempt {attempt}")
+                return result
+                
+        except Exception as e:
+            print(f"Attempt {attempt} failed for word {i}: {e}")
+            attempt += 1
+    
+    raise RuntimeError(f"Failed to process word {i} after {retries} attempts")
+
+# def GKdimension(mvp):
+#     GK = 0
+#     for term in mvp:
+#         x=re.sub("4.*4","",term[1])
+#         if len(x) > GK:
+#             GK = len(x)
+#     return GK
+
+# def find_GK_dimensions(dict):
+
+
+
+# To run the async main_parallel_async function
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Compute characters of simple modules.")
-    parser.add_argument("mode", choices=["main", "main_parallel","print_unique_values"], help="Mode to run the script in.")
+    parser.add_argument("mode", choices=["main", "main_parallel", "main_parallel_async", "print_unique_values", "skip_to"], help="Mode to run the script in.")
     parser.add_argument("n", type=int, help="Value of n.")
     parser.add_argument("v_counts", type=int, nargs="+", help="List of counts.")
+    parser.add_argument("--skip", type=int, default=0, help="Index to skip to in the computation.")
 
     args = parser.parse_args()
 
+
     if args.mode == "print_unique_values":
-            print_unique_values(args.n, args.v_counts)
+        print_unique_values(args.n, args.v_counts)
     else:
         while True:
-            if args.mode == "main":
-                main(args.n, args.v_counts)
+            if args.mode == "main_parallel_async":
+                asyncio.run(main_parallel_async(args.n, args.v_counts, args.skip))
             elif args.mode == "main_parallel":
                 main_parallel(args.n, args.v_counts)
+            elif args.mode == "main":
+                main(args.n, args.v_counts)
+            elif args.mode == "skip_to":
+                skip_to(args.n, args.skip, args.v_counts)
 
