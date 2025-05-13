@@ -199,7 +199,7 @@ def sync_to_server():
     try:
         print("Trying to sync to server...")
         subprocess.run(
-            ["rsync", "-avz", local_dir, remote_dir],
+            ["rsync", "-avzP", local_dir, remote_dir],
             check=True
         )
         # print("Trying to sync from server...")
@@ -243,7 +243,7 @@ def check_for_file(file_name,v_counts):
             return False
 
 def push_to_server(file_name, v_counts):
-    local_dir = "/Users/benwebster/b2webste/_binary_" + str(v_counts)
+    local_dir = "/Users/b2webste/b2webste/_binary_" + str(v_counts)
     remote_dir = "b2webste@biglinux.math.uwaterloo.ca:/u/b2webste/b2webste/_binary_" + str(v_counts)
     full_path = remote_dir + "/" + file_name
     new_file_name = local_dir + "/" + file_name
@@ -439,20 +439,28 @@ def compute_one_simple_character(red_good_words, i, n, queue=None):
     tmp_file_name = os.path.join(directory_name, tmp_file_handle)
     if os.path.exists(tmp_file_name):
         current_char = read_file(tmp_file_name)
+    if not os.path.exists(tmp_file_name):
+        current_char = check_for_file(tmp_file_handle, v_count)
     if current_char is None or not os.path.exists(tmp_file_name):
         standard_char = compute_standard_character(gl_parts, glp_parts, n)
         current_char = standard_char.copy()
         write_file(tmp_file_name, current_char)
-
+    r=0
     start_time = time.time()
+    print_time = time.time() 
+    skip = 1
     for j in range(i, -1, -1):
         maybe_char = read_file(file_name)
         if maybe_char is not None:
             return maybe_char
         queue.put((i, j))
-        if j % 100 == 0:
-            print(f"sending queue.put(({i}, {j}))")
-        if r >400 or (time.time() - start_time) >= 1800:
+        if (time.time() - print_time) >= 120:
+            print_time = time.time() 
+            print(i, " minus ", j, " skip ", skip, " r=", r, "since save", int(time.time() - start_time), time.strftime("%H:%M:%S", time.localtime()))
+            skip = 1
+        else:
+            skip += 1
+        if r >400 or (time.time() - start_time) >= 1200:
             start_time = time.time() 
             print("saving simple character for ", i, "r=", r,time.strftime("%H:%M:%S", time.localtime()))
             P=Process(target=write_file, args=(tmp_file_name, current_char))
@@ -587,6 +595,23 @@ def write_file(file_name, data):
     os.rename(tmp_file_name, file_name)  # Rename the temporary file to the original name
     #print(file_name, "saved", time.strftime("%H:%M:%S", time.localtime()))
 
+async def just_download(n, v_counts):
+    """Download the files from the server"""
+    red_good_words = generate_red_good_words(n, v_counts, 0)
+    tasks = []
+    for i in range(len(red_good_words)):
+        word = red_good_words[i]
+        wordie = concatenate_word(word)
+        v_count = [wordie.count(i) for i in range(1, n + 1)]
+        file_handle = f"simple_character_{wordie}_v_counts_{v_count}.pkl"
+        directory_name = f"_binary_{v_count}"
+        file_name = os.path.join(directory_name, file_handle)
+        if not os.path.exists(file_name):
+            print("File ", file_name, "for index ", i, " not found. Can I get it from the server?")
+            tasks.append(
+                check_for_file(file_handle, v_count)
+            )
+    await asyncio.gather(*tasks, return_exceptions=True)
 
 def main_parallel(n, v_counts):
     red_good_words = generate_red_good_words(n, v_counts, 0)
@@ -655,7 +680,7 @@ def main_parallel(n, v_counts):
         write_file(file_name, full_unique_values)  # Use write_file
     print("All done!")
 
-def main(n, v_counts):
+async def main(n, v_counts):
     """Main function to compute all characters"""
     print(f"Computing characters for n={n} with counts {v_counts}")
     red_good_words = generate_red_good_words(n, v_counts, 0)
@@ -687,15 +712,23 @@ def main(n, v_counts):
         os.makedirs(directory_name)
 
     print("doing ", j, "th red-good-word:", wordie)
-    try:
-        unique_values[j] = find_dimensions(compute_one_simple_character(red_good_words, j, n))
-        print("done computing unique values for ", concatenate_word(red_good_words[j]))
-        write_file(file_name, unique_values[j])
-        print("wrote unique values for ", wordie)
-        P = Process(target=sync_to_server, args=())
-        P.start()
-    except Exception as e:
-        print(f"Didn't work to process {file_name}, guess I'll try again: {e}")
+    with Progress() as progress:
+        task_ids = {}
+        with Manager() as manager:  # Use Manager to create a shared queue
+            queue = manager.Queue()
+            task_id = progress.add_task(f"[cyan]Processing word {j}", total=j, visible=True)
+            task_ids[j] = task_id
+            progress.add_task(f"[cyan]Processing word {j}", total=j, visible=True)
+            asyncio.create_task(monitor_progress(queue, progress, task_ids))
+            try:
+                unique_values[j] = find_dimensions(compute_one_simple_character(red_good_words, j, n,queue))
+                print("done computing unique values for ", concatenate_word(red_good_words[j]))
+                write_file(file_name, unique_values[j])
+                print("wrote unique values for ", wordie)
+                P = Process(target=sync_to_server, args=())
+                P.start()
+            except Exception as e:
+                print(f"Didn't work to process {file_name}, guess I'll try again: {e}")
 
     # full_unique_values = set(x for i in range(len(red_good_words)) for x in unique_values[i])
     # print("\nUnique values of characters:")
@@ -718,7 +751,6 @@ def skip_to(n, j, v_counts):
     if not os.path.exists(directory_name):
         os.makedirs(directory_name)
     for i in range(j, len(red_good_words)):
-
         word = red_good_words[i]
         wordie = concatenate_word(word)
         print("doing ", i, "th red-good-word:", wordie)
@@ -779,7 +811,7 @@ def sort_unique_values(input):
                 print("wrote unique values for word", i)
             else:
                 unique_values_list = {}
-            unique_values_list = sorted(unique_values[i], key=oneify)
+            unique_values_list = sorted(unique_values_list, key=oneify)
         return i, unique_values_list
   
 def print_unique_values(n, v_count):
@@ -791,7 +823,7 @@ def print_unique_values(n, v_count):
 
     file_name = f"results_{n}_vcounts_{v_count}.pkl"
     futures = []
-    with ProcessPoolExecutor(max_workers=30) as executor:
+    with ProcessPoolExecutor(max_workers=10) as executor:
         for i in range(len(red_good_words)):
             word = red_good_words[i]
             wordie = concatenate_word(word)
@@ -845,6 +877,77 @@ def print_unique_values(n, v_count):
         f.write(outs)
 
     print("All done!")
+def find_GK_dimension(n, current_char):
+    GKdim=0
+    for wordies in current_char.keys():
+        first_n_index = next((i for i, x in enumerate(wordies) if x == n), None)
+        last_n_index = next((i for i, x in enumerate(reversed(wordies)) if x == n), None)
+        if first_n_index is not None and last_n_index is not None:
+            last_n_index = len(wordies) - 1 - last_n_index
+            before_count = first_n_index
+            after_count = len(wordies) - last_n_index - 1
+            GKdim = max(GKdim, before_count + after_count)
+    return GKdim
+
+def infinite_weight_space(n, current_char):
+    IWS = False
+    for wordies in current_char.keys():
+        first_n_index = next((i for i, x in enumerate(wordies) if x == n), None)
+        last_n_index = next((i for i, x in enumerate(reversed(wordies)) if x == n), None)
+        if first_n_index is not None and last_n_index is not None:
+            last_n_index = len(wordies) - 1 - last_n_index
+            before_n = wordies[:first_n_index]
+            after_n = wordies[last_n_index + 1:]
+            if any(x in after_n for x in before_n):
+                IWS = True
+            break
+    return IWS
+
+
+def print_simple_dimensions(n, v_count):
+    red_good_words = generate_red_good_words(n, v_count, 0)
+    unique_values = {}
+    values = {}
+    valuesq = {}
+    maxes = {}
+
+    file_name = f"results_{n}_vcounts_{v_count}.pkl"
+    irrep_sizes = {}
+    GKdims=[]
+    IWS = []
+    for i in range(len(red_good_words)):
+        print("doing ", i, "th red-good-word:", red_good_words[i])
+        word = red_good_words[i]
+        wordie = concatenate_word(word)
+        directory_name = f"_binary_{v_count}"
+        char_file_handle = f"simple_character_{wordie}_v_counts_{v_count}.pkl"
+        char_file_name = os.path.join(directory_name, char_file_handle)
+        current_char = read_file(char_file_name)
+        if current_char is not None:
+            GKdims[i] = find_GK_dimension(n, current_char)
+            IWS[i] = infinite_weight_space(n, current_char)
+            for wordies in current_char.keys():
+                if wordies not in irrep_sizes.keys():
+                    irrep_sizes[wordies] = []
+                irrep_sizes[wordies].append(current_char[wordies])
+    for wordies in irrep_sizes.keys():
+        irrep_sizes[wordies] = sorted(irrep_sizes[wordies], key=oneify)
+    irrep_sizes1 = {key: list(map(oneify, sizes)) for key, sizes in irrep_sizes.items()}
+    irrep_sizesq = {key: list(map(latexify, sizes)) for key, sizes in irrep_sizes.items()}
+    unique_irrep_sizes = set(irrep_sizes1.values())
+    unique_irrep_sizesq = set(irrep_sizesq.values())
+    print("irrep_sizes=",unique_irrep_sizes)
+    print("irrep_sizesq=",unique_irrep_sizesq)
+    with open(file_name, "w") as f:
+        for wordies, sizes in irrep_sizes.items():
+            f.write(f"{wordies}: {', '.join(map(str, sizes))}\n")
+    plt.hist(GKdims, bins=100)
+    plt.xlabel("GK dimension")
+    plt.ylabel("Number of simples")
+    plt.title("Histogram of GK dimensions of simple modules")
+    plt.savefig(f"histogram_GK_dims_{n}_vcounts_{v_count}.png")
+    plt.close()
+
 
 import asyncio
 import threading
@@ -881,6 +984,7 @@ async def process_word_async_with_throttle(red_good_words, i, n, executor, semap
     await asyncio.to_thread(os.makedirs, directory_name, exist_ok=True)
 
     if not os.path.exists(char_file_name):
+        #print(f"About to do async_compute_one_simple_character for {i}th red-good-word: {wordie}")
         current_char = await async_compute_one_simple_character(red_good_words, i, n, executor, semaphore,queue)
         dimensions = find_dimensions(current_char)
         await asyncio.to_thread(write_file, file_name, dimensions)
@@ -906,21 +1010,18 @@ async def monitor_progress(queue, progress, task_ids):
             i, j = queue.get_nowait()  # Non-blocking queue read
             #print(f"receiving queue.put(({i}, {j}))")
             progress.update(task_ids[i], advance=1)
-            if i > j+1 and i not in current_tasks:
-                current_tasks.insert(0, i)
+            if i > j+20:
                 progress.update(task_ids[i], visible=True)
-                if len(current_tasks)>10:
-                    for k in current_tasks[10:]:
-                        current_tasks.remove(k)
-                        progress.update(task_ids[k], visible=False)
-                print(current_tasks)
-            # if j == "done":
-            #     progress.remove_task(task_ids[i])
+            if j == "failure":
+                progress.update(task_ids[i], visible=False)
+            if j == "done":
+                progress.update(task_ids[i], visible=False)
+                progress.remove_task(task_ids[i])
         except Exception:
             await asyncio.sleep(.1)  # Sleep briefly to avoid busy-waiting
 
-async def main_parallel_async(n, v_counts, skip=0):
-    semaphore = asyncio.Semaphore(5) 
+async def main_parallel_async(n, v_counts, skip=0,rnge=1000):
+    semaphore = asyncio.Semaphore(1) 
     """Asynchronous version of main_parallel."""
     def schedule_sync_to_server():
         """Schedule sync_to_server to run every hour."""
@@ -937,6 +1038,7 @@ async def main_parallel_async(n, v_counts, skip=0):
     red_good_words = generate_red_good_words(n, v_counts, 0)
     unique_values = {}
     tasks = []
+    task_ids = {}
     j=0
     for i in range(len(red_good_words)):
         word = red_good_words[i]
@@ -949,26 +1051,20 @@ async def main_parallel_async(n, v_counts, skip=0):
         char_file_name = os.path.join(directory_name, char_file_handle)
         unique_values[i] = read_file(file_name)
         if unique_values[i] is None or not os.path.exists(char_file_name):
-            j=i
-            break
-    print("j=",j)
+            task_ids[i] = progress.add_task(f"[cyan]Processing word {i}", total=i, visible=False)
+            tasks.append(
+                process_word_async_with_throttle(
+                    red_good_words, i, n, executor, semaphore, start_time, j, queue
+                )
+            )
     start_time=time.time()
     with Progress() as progress:
-        mini=min(j + skip + 1000, len(red_good_words))
-        task_ids = {}
         with Manager() as manager:  # Use Manager to create a shared queue
             queue = manager.Queue()
             with ProcessPoolExecutor() as executor:
-                for i in range(j, mini):
-                    task_ids[i] = progress.add_task(f"[cyan]Processing word {i}", total=i, visible=False)
-                    tasks.append(
-                        process_word_async_with_throttle(
-                            red_good_words, i, n, executor, semaphore, start_time, j, queue
-                        )
-                    )
                 await asyncio.gather(
                     asyncio.gather(*tasks, return_exceptions=True),  # Worker tasks
-                    monitor_progress(queue, progress, task_ids)     # Monitor progress
+                    #monitor_progress(queue, progress, task_ids)     # Monitor progress
                 )
 
     # Process full unique values if all tasks are completed
@@ -986,12 +1082,13 @@ async def main_parallel_async(n, v_counts, skip=0):
 #             print(f"{i} has a semaphore")
 #             await asyncio.sleep(5)
 
-async def async_compute_one_simple_character(red_good_words, i, n, executor, semaphore, retries=1000, delay=3600):
+async def async_compute_one_simple_character(red_good_words, i, n, executor, semaphore, queue, retries=1000, delay=600):
     """Asynchronous wrapper for compute_one_character_in_process with retry logic."""
     loop = asyncio.get_running_loop()
     attempt = 1
     
     while attempt <= retries:
+        start_time = time.time()
         print(f"Attempt {attempt} for word {i}")
         
         if attempt > 1:
@@ -1000,6 +1097,7 @@ async def async_compute_one_simple_character(red_good_words, i, n, executor, sem
         
         try:
             async with semaphore:  # This properly handles acquire and release
+                print(f"Waited {time.time() - start_time} seconds for semaphore")
                 print_semaphore_status(semaphore, f"After getting semaphore for word {i}, attempt {attempt}")
                 
                 result = await loop.run_in_executor(
@@ -1009,10 +1107,12 @@ async def async_compute_one_simple_character(red_good_words, i, n, executor, sem
                 )
                 
                 print(f"Successfully processed word {i} on attempt {attempt}")
+                queue.put((i, "done"))
                 return result
                 
         except Exception as e:
             print(f"Attempt {attempt} failed for word {i}: {e}")
+            queue.put((i, "failure"))
             attempt += 1
     
     raise RuntimeError(f"Failed to process word {i} after {retries} attempts")
@@ -1020,24 +1120,29 @@ async def async_compute_one_simple_character(red_good_words, i, n, executor, sem
 # To run the async main_parallel_async function
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Compute characters of simple modules.")
-    parser.add_argument("mode", choices=["main", "main_parallel", "main_parallel_async", "print_unique_values", "skip_to"], help="Mode to run the script in.")
+    parser.add_argument("mode", choices=["main", "main_parallel", "main_parallel_async", "print_unique_values", "print_sd", "skip_to","download"], help="Mode to run the script in.")
     parser.add_argument("n", type=int, help="Value of n.")
     parser.add_argument("v_counts", type=int, nargs="+", help="List of counts.")
     parser.add_argument("--skip", type=int, default=0, help="Index to skip to in the computation.")
+    parser.add_argument("--rnge", type=int, default=1000, help="Range to cover in the computation.")
 
     args = parser.parse_args()
 
 
     if args.mode == "print_unique_values":
         print_unique_values(args.n, args.v_counts)
+    elif args.mode == "print_sd":
+        print_simple_dimensions(args.n, args.v_counts)
+    elif args.mode == "download":
+        asyncio.run(just_download(args.n, args.v_counts))
     else:
         while True:
             if args.mode == "main_parallel_async":
-                asyncio.run(main_parallel_async(args.n, args.v_counts, args.skip))
+                asyncio.run(main_parallel_async(args.n, args.v_counts, args.skip,args.rnge))
             elif args.mode == "main_parallel":
                 main_parallel(args.n, args.v_counts)
             elif args.mode == "main":
-                main(args.n, args.v_counts)
+                asyncio.run(main(args.n, args.v_counts))
             elif args.mode == "skip_to":
                 skip_to(args.n, args.skip, args.v_counts)
 
