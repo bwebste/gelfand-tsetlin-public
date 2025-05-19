@@ -454,7 +454,7 @@ def compute_one_simple_character(red_good_words, i, n, queue=None):
         if maybe_char is not None:
             return maybe_char
         queue.put((i, j))
-        if (time.time() - print_time) >= 120:
+        if (time.time() - print_time) >= 30:
             print_time = time.time() 
             print(i, " minus ", j, " skip ", skip, " r=", r, "since save", int(time.time() - start_time), time.strftime("%H:%M:%S", time.localtime()))
             skip = 1
@@ -595,7 +595,7 @@ def write_file(file_name, data):
     os.rename(tmp_file_name, file_name)  # Rename the temporary file to the original name
     #print(file_name, "saved", time.strftime("%H:%M:%S", time.localtime()))
 
-async def just_download(n, v_counts):
+def just_download(n, v_counts):
     """Download the files from the server"""
     red_good_words = generate_red_good_words(n, v_counts, 0)
     tasks = []
@@ -603,15 +603,18 @@ async def just_download(n, v_counts):
         word = red_good_words[i]
         wordie = concatenate_word(word)
         v_count = [wordie.count(i) for i in range(1, n + 1)]
-        file_handle = f"simple_character_{wordie}_v_counts_{v_count}.pkl"
+        file_handle = f"unique_values_{wordie}_v_counts_{v_count}.pkl"  # Use .pkl for binary files
+        char_file_handle = f"simple_character_{wordie}_v_counts_{v_count}.pkl"
         directory_name = f"_binary_{v_count}"
         file_name = os.path.join(directory_name, file_handle)
-        if not os.path.exists(file_name):
+        char_file_name = os.path.join(directory_name, char_file_handle)
+        if not os.path.exists(char_file_name):
             print("File ", file_name, "for index ", i, " not found. Can I get it from the server?")
-            tasks.append(
-                check_for_file(file_handle, v_count)
-            )
-    await asyncio.gather(*tasks, return_exceptions=True)
+            check_for_file(char_file_handle, v_count)
+            current_char = read_file(char_file_name)
+            if current_char is not None:
+                unique_values = find_dimensions(current_char)
+                write_file(file_name, unique_values)
 
 def main_parallel(n, v_counts):
     red_good_words = generate_red_good_words(n, v_counts, 0)
@@ -680,7 +683,7 @@ def main_parallel(n, v_counts):
         write_file(file_name, full_unique_values)  # Use write_file
     print("All done!")
 
-async def main(n, v_counts):
+def main(n, v_counts):
     """Main function to compute all characters"""
     print(f"Computing characters for n={n} with counts {v_counts}")
     red_good_words = generate_red_good_words(n, v_counts, 0)
@@ -716,10 +719,10 @@ async def main(n, v_counts):
         task_ids = {}
         with Manager() as manager:  # Use Manager to create a shared queue
             queue = manager.Queue()
-            task_id = progress.add_task(f"[cyan]Processing word {j}", total=j, visible=True)
-            task_ids[j] = task_id
-            progress.add_task(f"[cyan]Processing word {j}", total=j, visible=True)
-            asyncio.create_task(monitor_progress(queue, progress, task_ids))
+            # task_id = progress.add_task(f"[cyan]Processing word {j}", total=j, visible=True)
+            # task_ids[j] = task_id
+            #progress.add_task(f"[cyan]Processing word {j}", total=j, visible=True)
+            #asyncio.create_task(monitor_progress(queue, progress, task_ids))
             try:
                 unique_values[j] = find_dimensions(compute_one_simple_character(red_good_words, j, n,queue))
                 print("done computing unique values for ", concatenate_word(red_good_words[j]))
@@ -738,7 +741,13 @@ async def main(n, v_counts):
 
     # file_name = f"results_{n}_vcounts_{v_counts}.pkl"
     # write_file(file_name, full_unique_values)
-    print("On to the next one!")
+    if j == len(red_good_words):
+        return True
+    else:
+        print("On to the next one!")
+        return False
+    
+
 def skip_to(n, j, v_counts):
     """Skip to a specific index in the computation"""
     red_good_words = generate_red_good_words(n, v_counts, 0)
@@ -798,8 +807,13 @@ import matplotlib.pyplot as plt
 def sort_unique_values(input):
         i,sub_file_name,char_file_name,red_good_words,n = input
         unique_values_list = read_file(sub_file_name)
-        if unique_values_list is None:
-            unique_values_list = {}
+        if unique_values_list is None: 
+            if os.path.exists(char_file_name):
+                unique_values_list = find_dimensions(compute_one_simple_character(red_good_words, i, n))
+                write_file(sub_file_name, unique_values_list)  # Use write_file
+                print("wrote unique values for word", i)
+            else: 
+                unique_values_list = {}
         try: 
             unique_values_list = sorted(unique_values_list, key=oneify)
         except Exception as e:
@@ -882,11 +896,13 @@ def find_GK_dimension(n, current_char):
     for wordies in current_char.keys():
         first_n_index = next((i for i, x in enumerate(wordies) if x == n), None)
         last_n_index = next((i for i, x in enumerate(reversed(wordies)) if x == n), None)
-        if first_n_index is not None and last_n_index is not None:
+        if current_char[wordies].coeffs[0] != 0:
             last_n_index = len(wordies) - 1 - last_n_index
             before_count = first_n_index
             after_count = len(wordies) - last_n_index - 1
-            GKdim = max(GKdim, before_count + after_count)
+            if before_count + after_count > GKdim:
+                #print("wordies=",wordies,"gives ", before_count + after_count, " GKdim=", GKdim)
+                GKdim = before_count + after_count
     return GKdim
 
 def infinite_weight_space(n, current_char):
@@ -894,7 +910,7 @@ def infinite_weight_space(n, current_char):
     for wordies in current_char.keys():
         first_n_index = next((i for i, x in enumerate(wordies) if x == n), None)
         last_n_index = next((i for i, x in enumerate(reversed(wordies)) if x == n), None)
-        if first_n_index is not None and last_n_index is not None:
+        if current_char[wordies].coeffs[0] != 0:
             last_n_index = len(wordies) - 1 - last_n_index
             before_n = wordies[:first_n_index]
             after_n = wordies[last_n_index + 1:]
@@ -903,45 +919,90 @@ def infinite_weight_space(n, current_char):
             break
     return IWS
 
+def redundant_word(word):
+    for i in range(len(word) - 1):
+        if word[i] < word[i + 1] - 1:
+            return True
+    return False
 
-def print_simple_dimensions(n, v_count):
+def print_simple_dimensions(n, v_count,rnge=1):
     red_good_words = generate_red_good_words(n, v_count, 0)
     unique_values = {}
     values = {}
     valuesq = {}
     maxes = {}
 
-    file_name = f"results_{n}_vcounts_{v_count}.pkl"
-    irrep_sizes = {}
-    GKdims=[]
-    IWS = []
-    for i in range(len(red_good_words)):
-        print("doing ", i, "th red-good-word:", red_good_words[i])
-        word = red_good_words[i]
-        wordie = concatenate_word(word)
-        directory_name = f"_binary_{v_count}"
-        char_file_handle = f"simple_character_{wordie}_v_counts_{v_count}.pkl"
-        char_file_name = os.path.join(directory_name, char_file_handle)
-        current_char = read_file(char_file_name)
-        if current_char is not None:
-            GKdims[i] = find_GK_dimension(n, current_char)
-            IWS[i] = infinite_weight_space(n, current_char)
-            for wordies in current_char.keys():
-                if wordies not in irrep_sizes.keys():
-                    irrep_sizes[wordies] = []
-                irrep_sizes[wordies].append(current_char[wordies])
-    for wordies in irrep_sizes.keys():
-        irrep_sizes[wordies] = sorted(irrep_sizes[wordies], key=oneify)
-    irrep_sizes1 = {key: list(map(oneify, sizes)) for key, sizes in irrep_sizes.items()}
-    irrep_sizesq = {key: list(map(latexify, sizes)) for key, sizes in irrep_sizes.items()}
-    unique_irrep_sizes = set(irrep_sizes1.values())
-    unique_irrep_sizesq = set(irrep_sizesq.values())
-    print("irrep_sizes=",unique_irrep_sizes)
-    print("irrep_sizesq=",unique_irrep_sizesq)
+    file_handle = f"results_{n}_vcounts_{v_count}.pkl"
+    last_word_handle = f"last_word_{n}_vcounts_{v_count}.pkl"
+    directory_name = f"_binary_{v_count}"
+    file_name = os.path.join(directory_name, file_handle)
+    last_word_name = os.path.join(directory_name, last_word_handle)
+    if os.path.exists(last_word_name):
+        irrep_sizes, done_chars = read_file(last_word_name)
+        print("loaded irrep_sizes from ", last_word_name)
+        print(irrep_sizes,done_chars)
+    if not os.path.exists(last_word_name) or irrep_sizes is None:
+        irrep_sizes = set()
+        done_chars = []
+    GKdims = [None] * len(red_good_words)  # Pre-allocate the list with None
+    IWS = [None] * len(red_good_words)    # Pre-allocate the list with None
+    reps =int(len(red_good_words)/rnge)
+    for i in range(reps):
+        working_words=set()
+        for j in range(i*rnge, len(red_good_words)):
+            word = red_good_words[j]
+            wordie = concatenate_word(word)
+            char_file_handle = f"simple_character_{wordie}_v_counts_{v_count}.pkl"
+            char_file_name = os.path.join(directory_name, char_file_handle)
+            current_char = read_file(char_file_name)
+            if j<(i+1)*rnge and current_char is not None:
+                GKdims[j] = find_GK_dimension(n, current_char)
+                IWS[j] = infinite_weight_space(n, current_char)
+                print("GKdim=", GKdims[j], "IWS=", IWS[j])
+                current_irrep_sizes = dict()
+                current_working_words=[wordies for wordies in current_char.keys() if not redundant_word(wordies) and wordies not in done_chars]
+                working_words.update(current_working_words)
+            if j % 100 == 0:
+                print("checking ",  j, "in" , i, "th run")
+            for wordies in working_words:
+                dim=oneify(current_char[wordies])
+                if dim >0:                        
+                    if wordies not in current_irrep_sizes:
+                        current_irrep_sizes[wordies] = [dim]
+                    else:
+                        current_irrep_sizes[wordies].append(dim)
+                    print("added ", dim, " for ", wordies, i, j)
+        current_irrep_sizes = {key: sorted(set(value)) for key, value in current_irrep_sizes.items()}
+        for wordies in working_words:
+            if wordies in current_irrep_sizes.keys():
+                print("wordies=", wordies, "gives ", current_irrep_sizes[wordies])
+                irrep_sizes.add(tuple(current_irrep_sizes[wordies]))
+                done_chars.append(wordies)
+        write_file(last_word_name, [irrep_sizes,done_chars])
+    print(irrep_sizes)
+    # irrep_sizes1 = {key: list(map(oneify, sizes)) for key, sizes in irrep_sizes.items()}
+    # irrep_sizesq = {key: list(map(latexify, sizes)) for key, sizes in irrep_sizes.items()}
+    # unique_irrep_sizes = set(irrep_sizes.values())
+    # unique_irrep_sizesq = set(irrep_sizesq.values())
+    # print("irrep_sizes=",unique_irrep_sizes)
+    # print("irrep_sizesq=",unique_irrep_sizesq)
+
     with open(file_name, "w") as f:
-        for wordies, sizes in irrep_sizes.items():
-            f.write(f"{wordies}: {', '.join(map(str, sizes))}\n")
-    plt.hist(GKdims, bins=100)
+        f.write(irrep_sizes)
+    gk_dims_true = [GKdims[i] for i in range(len(GKdims)) if IWS[i]]
+    gk_dims_false = [GKdims[i] for i in range(len(GKdims)) if not IWS[i]]
+    maxdim=sum(v_count)-v_count[n-1]
+    plt.hist(
+        [gk_dims_false, gk_dims_true],
+        bins=range(maxdim + 2),  # Ensure bins cover the full range of GKdims
+        align='left',
+        stacked=True,
+        color=['blue', 'orange'],  # One color per dataset
+        label=['IWS', 'No IWS']
+    )
+
+    # Add legend and labels
+    plt.legend()
     plt.xlabel("GK dimension")
     plt.ylabel("Number of simples")
     plt.title("Histogram of GK dimensions of simple modules")
@@ -984,7 +1045,6 @@ async def process_word_async_with_throttle(red_good_words, i, n, executor, semap
     await asyncio.to_thread(os.makedirs, directory_name, exist_ok=True)
 
     if not os.path.exists(char_file_name):
-        #print(f"About to do async_compute_one_simple_character for {i}th red-good-word: {wordie}")
         current_char = await async_compute_one_simple_character(red_good_words, i, n, executor, semaphore,queue)
         dimensions = find_dimensions(current_char)
         await asyncio.to_thread(write_file, file_name, dimensions)
@@ -1020,8 +1080,8 @@ async def monitor_progress(queue, progress, task_ids):
         except Exception:
             await asyncio.sleep(.1)  # Sleep briefly to avoid busy-waiting
 
-async def main_parallel_async(n, v_counts, skip=0,rnge=1000):
-    semaphore = asyncio.Semaphore(1) 
+async def main_parallel_async(n, v_counts, skip=0,rnge=1000,semnum=1):
+    semaphore = asyncio.Semaphore(semnum) 
     """Asynchronous version of main_parallel."""
     def schedule_sync_to_server():
         """Schedule sync_to_server to run every hour."""
@@ -1040,28 +1100,36 @@ async def main_parallel_async(n, v_counts, skip=0,rnge=1000):
     tasks = []
     task_ids = {}
     j=0
-    for i in range(len(red_good_words)):
-        word = red_good_words[i]
-        wordie = concatenate_word(word)
-        v_count = [wordie.count(i) for i in range(1, n + 1)]
-        file_handle = f"unique_values_{wordie}_v_counts_{v_count}.pkl"
-        char_file_handle = f"simple_character_{wordie}_v_counts_{v_count}.pkl"
-        directory_name = f"_binary_{v_count}"
-        file_name = os.path.join(directory_name, file_handle)
-        char_file_name = os.path.join(directory_name, char_file_handle)
-        unique_values[i] = read_file(file_name)
-        if unique_values[i] is None or not os.path.exists(char_file_name):
-            task_ids[i] = progress.add_task(f"[cyan]Processing word {i}", total=i, visible=False)
-            tasks.append(
-                process_word_async_with_throttle(
-                    red_good_words, i, n, executor, semaphore, start_time, j, queue
-                )
-            )
     start_time=time.time()
     with Progress() as progress:
         with Manager() as manager:  # Use Manager to create a shared queue
             queue = manager.Queue()
+            mini = 0 
+            maxi = 0
             with ProcessPoolExecutor() as executor:
+                for i in range(skip,len(red_good_words)):
+                    word = red_good_words[i]
+                    wordie = concatenate_word(word)
+                    v_count = [wordie.count(i) for i in range(1, n + 1)]
+                    file_handle = f"unique_values_{wordie}_v_counts_{v_count}.pkl"
+                    char_file_handle = f"simple_character_{wordie}_v_counts_{v_count}.pkl"
+                    directory_name = f"_binary_{v_count}"
+                    file_name = os.path.join(directory_name, file_handle)
+                    char_file_name = os.path.join(directory_name, char_file_handle)
+                    unique_values[i] = read_file(file_name)
+                    if unique_values[i] is None or not os.path.exists(char_file_name):
+                        if mini == 0:
+                            mini = i
+                        if i - mini < rnge:
+                            task_ids[i] = progress.add_task(f"[cyan]Processing word {i}", total=i, visible=False)
+                            tasks.append(
+                                process_word_async_with_throttle(
+                                    red_good_words, i, n, executor, semaphore, start_time, j, queue
+                                )
+                            )
+                    if i > maxi:
+                        maxi = i
+
                 await asyncio.gather(
                     asyncio.gather(*tasks, return_exceptions=True),  # Worker tasks
                     #monitor_progress(queue, progress, task_ids)     # Monitor progress
@@ -1076,6 +1144,10 @@ async def main_parallel_async(n, v_counts, skip=0,rnge=1000):
     # file_name = f"results_{n}_vcounts_{v_counts}.pkl"
     # await asyncio.to_thread(write_file, file_name, full_unique_values)
     print("All done!")
+    if maxi == len(red_good_words):
+        return True
+    else:
+        return False
 
 # async def background_task(i):
 #         while True:
@@ -1125,7 +1197,7 @@ if __name__ == "__main__":
     parser.add_argument("v_counts", type=int, nargs="+", help="List of counts.")
     parser.add_argument("--skip", type=int, default=0, help="Index to skip to in the computation.")
     parser.add_argument("--rnge", type=int, default=1000, help="Range to cover in the computation.")
-
+    parser.add_argument("--semnum", type=int, default=20, help="Number of semaphores to use.")
     args = parser.parse_args()
 
 
@@ -1134,15 +1206,16 @@ if __name__ == "__main__":
     elif args.mode == "print_sd":
         print_simple_dimensions(args.n, args.v_counts)
     elif args.mode == "download":
-        asyncio.run(just_download(args.n, args.v_counts))
+        just_download(args.n, args.v_counts)
     else:
-        while True:
+        done = False
+        while done == False:
             if args.mode == "main_parallel_async":
-                asyncio.run(main_parallel_async(args.n, args.v_counts, args.skip,args.rnge))
+                done = asyncio.run(main_parallel_async(args.n, args.v_counts, args.skip,args.rnge,args.semnum))
             elif args.mode == "main_parallel":
                 main_parallel(args.n, args.v_counts)
             elif args.mode == "main":
-                asyncio.run(main(args.n, args.v_counts))
+                done = main(args.n, args.v_counts)
             elif args.mode == "skip_to":
                 skip_to(args.n, args.skip, args.v_counts)
 
