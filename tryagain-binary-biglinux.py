@@ -1029,7 +1029,7 @@ def print_semaphore_status(semaphore, label="Semaphore Status"):
     """Print the current state of the semaphore."""
     print(f"{label}: Available permits = {semaphore._value}")
 
-async def process_word_async_with_throttle(red_good_words, i, n, executor, semaphore,start_time,j,queue):
+async def process_word_async_with_throttle(red_good_words, i, n, executor, semaphore,start_time,j,queue,delay):
     #async with semaphore:  # Limit concurrency
     # if time.time() - start_time <= 120:
     #     wait = (i - j) 
@@ -1046,7 +1046,7 @@ async def process_word_async_with_throttle(red_good_words, i, n, executor, semap
     await asyncio.to_thread(os.makedirs, directory_name, exist_ok=True)
 
     if not os.path.exists(char_file_name):
-        current_char = await async_compute_one_simple_character(red_good_words, i, n, executor, semaphore,queue)
+        current_char = await async_compute_one_simple_character(red_good_words, i, n, executor, semaphore,queue,delay)
         dimensions = find_dimensions(current_char)
         await asyncio.to_thread(write_file, file_name, dimensions)
         print("Wrote unique values for", wordie)
@@ -1063,31 +1063,40 @@ async def process_word_async_with_throttle(red_good_words, i, n, executor, semap
     queue.put((i, "done"))
     print("Done with", i, "th red-good-word:", wordie)
 
-async def monitor_progress(queue, progress, task_ids):
-    """Monitor the queue for progress updates and update the progress bars."""
+async def monitor_progress(queue, progress, task_ids, not_done,still_running):
     current_tasks = []
+    print("still_running = ", still_running)
+    print("not_done = ", not_done)
+    if len(not_done) >10 and len(still_running) < 10:
+        return False
     while True:
         try:
             i, j = queue.get_nowait()  # Non-blocking queue read
-            #print(f"receiving queue.put(({i}, {j}))")
-            progress.update(task_ids[i], advance=1)
-            if i > j+20:
-                progress.update(task_ids[i], visible=True)
-            if j == "failure":
-                progress.update(task_ids[i], visible=False)
+            # #print(f"receiving queue.put(({i}, {j}))")
+            # progress.update(task_ids[i], advance=1)
+            # if i > j+20:
+            #     progress.update(task_ids[i], visible=True)
+            # if j == "failure":
+            #     progress.update(task_ids[i], visible=False)
             if j == "done":
-                progress.update(task_ids[i], visible=False)
-                progress.remove_task(task_ids[i])
+                not_done.discard(i)
+                still_running.discard(i)
+                print("still_running = ", still_running)
+                print("not_done = ", not_done)
+                if len(not_done) >10 and len(still_running) < 10:
+                    return False
         except Exception:
             await asyncio.sleep(.1)  # Sleep briefly to avoid busy-waiting
 
-async def main_parallel_async(n, v_counts, skip=0,rnge=1000,semnum=20):
+async def main_parallel_async(n, v_counts, skip=0,rnge=1000,semnum=20,delay=20):
     semaphore = asyncio.Semaphore(semnum) 
     """Asynchronous version of main_parallel."""
     red_good_words = generate_red_good_words(n, v_counts, 0)
     unique_values = {}
     tasks = []
     task_ids = {}
+    not_done = set()
+    still_running = set()
     j=0
     start_time=time.time()
     with Progress() as progress:
@@ -1107,22 +1116,27 @@ async def main_parallel_async(n, v_counts, skip=0,rnge=1000,semnum=20):
                     char_file_name = os.path.join(directory_name, char_file_handle)
                     unique_values[i] = read_file(file_name)
                     if unique_values[i] is None or not os.path.exists(char_file_name):
+                        not_done.add(i)
                         if mini == 0:
                             mini = i
                         if i - mini < rnge:
+                            still_running.add(i)
                             task_ids[i] = progress.add_task(f"[cyan]Processing word {i}", total=i, visible=False)
                             tasks.append(
                                 process_word_async_with_throttle(
-                                    red_good_words, i, n, executor, semaphore, start_time, j, queue
+                                    red_good_words, i, n, executor, semaphore, start_time, j, queue, delay
                                 )
                             )
                     if i > maxi:
                         maxi = i
 
-                await asyncio.gather(
-                    asyncio.gather(*tasks, return_exceptions=True),  # Worker tasks
-                    #monitor_progress(queue, progress, task_ids)     # Monitor progress
-                )
+                monitor_task = asyncio.create_task(monitor_progress(queue, progress, task_ids, not_done, still_running))
+                worker_tasks = asyncio.gather(*tasks, return_exceptions=True)
+                await asyncio.gather(worker_tasks, monitor_task)
+
+                if monitor_task.done() and monitor_task.result() is False:
+                    print("too few tasks running, let's try again")
+                    return False
 
     # Process full unique values if all tasks are completed
     # full_unique_values = set(x for i in range(len(red_good_words)) for x in unique_values.get(i, []))
@@ -1251,6 +1265,7 @@ if __name__ == "__main__":
     parser.add_argument("--skip", type=int, default=0, help="Index to skip to in the computation.")
     parser.add_argument("--rnge", type=int, default=1000, help="Range to cover in the computation.")
     parser.add_argument("--semnum", type=int, default=20, help="Number of semaphores to use.")
+    parser.add_argument("--delay", type=int, default=20, help="Delay before retrying.")
     args = parser.parse_args()
 
 
@@ -1262,7 +1277,8 @@ if __name__ == "__main__":
         done = False
         while done == False:
             if args.mode == "main_parallel_async":
-                done = asyncio.run(main_parallel_async(args.n, args.v_counts, args.skip,args.rnge,args.semnum))
+                done = asyncio.run(main_parallel_async(args.n, args.v_counts, args.skip,args.rnge,args.semnum,args.delay))
+                args.rnge = args.rnge +10
             elif args.mode == "main_parallel":
                 main_parallel(args.n, args.v_counts)
             elif args.mode == "main":
