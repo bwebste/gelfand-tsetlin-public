@@ -1067,7 +1067,9 @@ async def monitor_progress(queue, progress, task_ids, not_done,still_running):
     current_tasks = []
     print("still_running = ", still_running)
     print("not_done = ", not_done)
+    print("len(not_done) =", len(not_done) , "len(still_running) = ", len(still_running))
     if len(not_done) >10 and len(still_running) < 10:
+        print("too few tasks running, let's try again")
         return False
     while True:
         try:
@@ -1081,6 +1083,7 @@ async def monitor_progress(queue, progress, task_ids, not_done,still_running):
             if j == "done":
                 not_done.discard(i)
                 still_running.discard(i)
+                print("len(not_done) =", len(not_done) , "len(still_running) = ", len(still_running))
                 print("still_running = ", still_running)
                 print("not_done = ", not_done)
                 if len(not_done) >10 and len(still_running) < 10:
@@ -1132,9 +1135,12 @@ async def main_parallel_async(n, v_counts, skip=0,rnge=1000,semnum=20,delay=20):
 
                 monitor_task = asyncio.create_task(monitor_progress(queue, progress, task_ids, not_done, still_running))
                 worker_tasks = asyncio.gather(*tasks, return_exceptions=True)
-                await asyncio.gather(worker_tasks, monitor_task)
+                done, pending = await asyncio.wait(
+                    [monitor_task, worker_tasks],
+                    return_when=asyncio.FIRST_COMPLETED,
+                )
 
-                if monitor_task.done() and monitor_task.result() is False:
+                if monitor_task in done:
                     print("too few tasks running, let's try again")
                     return False
 
