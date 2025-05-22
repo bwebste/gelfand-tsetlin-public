@@ -391,6 +391,66 @@ def closer_to_a_simple(current_char, red_good_words, n):
             return current_char
     return current_char
 
+def closer_for_many_simples(current_chars, red_good_words, n,i):
+    if current_chars == dict():
+        return dict()
+    word = red_good_words[i]
+    c_word = concatenate_word(word)
+    v_count = [c_word.count(i) for i in range(1, n + 1)]
+    bar_invariants = {k: is_bar_invariant(current_chars[k][c_word]) for k in current_chars}
+    if any(not bar_invariants[k] for k in bar_invariants.keys()):
+        file_handle = f"simple_character_{c_word}_v_counts_{v_count}.pkl"
+        directory_name = f"_binary_{v_count}"
+        file_name = os.path.join(directory_name, file_handle)
+
+        lower_char = read_file(file_name)
+        if lower_char is None:
+            #lower_char = check_for_file(file_handle, v_count)
+            #if lower_char is None:
+                iter_over = list(current_chars.keys())
+                for k in iter_over:
+                    if not bar_invariants[k]:
+                        word = red_good_words[i]
+                        wordie = concatenate_word(word)
+                        tmp_file_handle = f"tmp_simple_character_{wordie}_v_counts_{v_count}.pkl"
+                        tmp_file_name = os.path.join(directory_name, tmp_file_handle)
+                        P=Process(target=write_file, args=(tmp_file_name, current_chars[k]))
+                        P.start()
+                        del current_chars[k]
+                        print("removing ", k, " from current_chars")
+        else:
+            iter_over = list(current_chars.keys())
+            for k in iter_over:
+                current_char = current_chars[k]
+                coefficient = current_char[c_word]
+                simple_mult = LaurentPolynomial()
+                mod_coefficient = LaurentPolynomial(coefficient.coeffs.copy())
+                mult, multdegree = multiplicity_factor(word[0])
+                q = 1
+                while not is_bar_invariant(mod_coefficient):
+                    q += 1
+                    maxi = max(
+                        power
+                        for power in mod_coefficient.coeffs.keys()
+                        if -power not in mod_coefficient.coeffs.keys()
+                        or mod_coefficient.coeffs[power] != mod_coefficient.coeffs[-power]
+                    )
+                    simple_mult += LaurentPolynomial(
+                        {maxi - multdegree: mod_coefficient.coeffs[maxi] - mod_coefficient.coeffs[-maxi]}
+                    )
+                    mod_coefficient = LaurentPolynomial(coefficient.coeffs.copy()) - simple_mult * mult
+                    if q > 10000:
+                        raise ValueError("This has gone on too long")
+                    print("removing", i, "from", k)
+                for wordies in lower_char.keys():
+                    print("current_char[wordies]=", current_char[wordies], ", simple_mult=", simple_mult, ", lower_char[wordies]=", lower_char[wordies])
+                    current_char[wordies] = current_char[wordies] + (-simple_mult * lower_char[wordies])
+                    if any(coeff < 0 for coeff in current_char[wordies].coeffs.values()):
+                        raise ValueError("These coefficients are supposed to be non-negative")
+        print("currently doing", current_chars.keys())
+        return current_chars
+    return current_chars
+
 def compute_one_simple_character(red_good_words, i, n, queue=None):
     """Compute the character of a simple module with progress tracking."""
     print(f"computing for {i}")
@@ -928,8 +988,8 @@ def print_simple_dimensions(n, v_count,rnge=1):
     # print("irrep_sizes=",unique_irrep_sizes)
     # print("irrep_sizesq=",unique_irrep_sizesq)
 
-    with open(file_name, "w") as f:
-        f.write(irrep_sizes)
+    # with open(file_name, "w") as f:
+    #     f.write(irrep_sizes)
     gk_dims_true = [GKdims[i] for i in range(len(GKdims)) if IWS[i]]
     gk_dims_false = [GKdims[i] for i in range(len(GKdims)) if not IWS[i]]
     maxdim=sum(v_count)-v_count[n-1]
@@ -1035,7 +1095,7 @@ async def main_parallel_async(n, v_counts, skip=0,rnge=1000,semnum=20):
             queue = manager.Queue()
             mini = 0 
             maxi = 0
-            with ProcessPoolExecutor() as executor:
+            with ProcessPoolExecutor(max_workers=semnum) as executor:
                 for i in range(skip,len(red_good_words)):
                     word = red_good_words[i]
                     wordie = concatenate_word(word)
@@ -1083,7 +1143,7 @@ async def main_parallel_async(n, v_counts, skip=0,rnge=1000,semnum=20):
 #             print(f"{i} has a semaphore")
 #             await asyncio.sleep(5)
 
-async def async_compute_one_simple_character(red_good_words, i, n, executor, semaphore, queue, retries=1000, delay=100):
+async def async_compute_one_simple_character(red_good_words, i, n, executor, semaphore, queue, retries=1000, delay=10):
     """Asynchronous wrapper for compute_one_character_in_process with retry logic."""
     loop = asyncio.get_running_loop()
     attempt = 1
@@ -1118,10 +1178,74 @@ async def async_compute_one_simple_character(red_good_words, i, n, executor, sem
     
     raise RuntimeError(f"Failed to process word {i} after {retries} attempts")
 
+def do_many(n, v_counts, skip=0):
+    red_good_words = generate_red_good_words(n, v_counts, 0)
+    ell=len(red_good_words)-skip
+    print("ell=", ell)
+    current_chars = dict()
+    r=0
+    start_time = time.time()
+    print_time = time.time() 
+    skip = 1
+    not_done = set()
+    directory_name = f"_binary_{v_counts}"
+    if not os.path.exists(directory_name):
+        os.makedirs(directory_name)
+    for i in reversed(range(ell)):
+        print("doing ", i)
+        current_chars = closer_for_many_simples(current_chars, red_good_words, n,i)
+        r+=1
+        if (time.time() - start_time) >= 1200: 
+            r=1    
+            start_time = time.time() 
+            print("saving simple character for ", current_chars.keys(), "r=", r,time.strftime("%H:%M:%S", time.localtime()))
+            for k in current_chars.keys():
+                word = red_good_words[k]
+                wordie = concatenate_word(word)
+                tmp_file_handle = f"tmp_simple_character_{wordie}_v_counts_{v_count}.pkl"
+                tmp_file_name = os.path.join(directory_name, tmp_file_handle)
+                current_char = current_chars[k]
+                P=Process(target=write_file, args=(tmp_file_name, current_char))
+                P.start()
+        word = red_good_words[i]
+        wordie = concatenate_word(word)
+        v_count = [wordie.count(i) for i in range(1, n + 1)]
+        char_file_handle = f"simple_character_{wordie}_v_counts_{v_count}.pkl"
+        char_file_name = os.path.join(directory_name, char_file_handle)
+        if not os.path.exists(char_file_name):
+            not_done.add(i)
+            tmp_file_handle = f"tmp_simple_character_{wordie}_v_counts_{v_count}.pkl"
+            tmp_file_name = os.path.join(directory_name, tmp_file_handle)
+            if os.path.exists(tmp_file_name):
+                current_char = read_file(tmp_file_name)
+                print("read temporary character for ", i)
+            else:
+                current_char = compute_standard_character(word[0], word[1], n)
+                write_file(tmp_file_name, current_char)
+            if current_char is None:
+                current_char = compute_standard_character(word[0], word[1], n)
+                write_file(tmp_file_name, current_char)
+            current_chars[i] = current_char
+    for k in current_chars.keys():
+        word = red_good_words[k]
+        wordie = concatenate_word(word)
+        file_handle = f"simple_character_{wordie}_v_counts_{v_count}.pkl"
+        file_name = os.path.join(directory_name, file_handle)
+        current_char = current_chars[k]
+        write_file(file_name, current_char)
+        print("wrote simple character for ", k, time.strftime("%H:%M:%S", time.localtime()))
+        time.sleep(3)
+    if skip == 0 and not_done==set():
+        print("All done!")
+        return True
+    else:
+        print("On to the next one!")
+        return False
+
 # To run the async main_parallel_async function
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Compute characters of simple modules.")
-    parser.add_argument("mode", choices=["main", "main_parallel", "main_parallel_async", "print_unique_values", "print_sd", "skip_to"], help="Mode to run the script in.")
+    parser.add_argument("mode", choices=["main", "main_parallel", "main_parallel_async", "print_unique_values", "print_sd", "skip_to","do_many"], help="Mode to run the script in.")
     parser.add_argument("n", type=int, help="Value of n.")
     parser.add_argument("v_counts", type=int, nargs="+", help="List of counts.")
     parser.add_argument("--skip", type=int, default=0, help="Index to skip to in the computation.")
@@ -1145,4 +1269,6 @@ if __name__ == "__main__":
                 done = main(args.n, args.v_counts)
             elif args.mode == "skip_to":
                 skip_to(args.n, args.skip, args.v_counts)
-
+            elif args.mode == "do_many":
+                done = do_many(args.n, args.v_counts, args.skip)
+                args.skip -= 1
