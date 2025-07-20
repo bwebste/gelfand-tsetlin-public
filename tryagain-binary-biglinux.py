@@ -707,7 +707,7 @@ def compute_simple_characters(standard_chars,red_good_words):
 
 def format_character(char):
     """Format a character for printing"""
-    return "\n".join(f"{word}: {char[word]}" for word in sorted(char.keys()) if char[word] != 0)
+    return "\n".join(f"{word}: {oneify(char[word])}" for word in sorted(char.keys()) if oneify(char[word]) != 0)
 
 
 def compute_standard_character_for_word(word,n):
@@ -722,11 +722,6 @@ def find_dimensions(simple_char):
     flattened_values = [clean_polynomial(value) for value in simple_char.values()]
     unique_values = set(flattened_values)
     return unique_values
-
-# def set_memory_limit(max_memory):
-#     """Set the maximum memory limit for the current process."""
-#     soft, hard = resource.getrlimit(resource.RLIMIT_AS)
-#     resource.setrlimit(resource.RLIMIT_AS, (max_memory, hard))
 
 def read_file(file_name):
     """Read the content of a file using pickle and return it."""
@@ -811,7 +806,7 @@ def main_parallel(n, v_counts, skip = 1000, semnum = 10):
     print("All done!")
     return False
 
-def main(n, v_counts):
+def main(n, v_counts, skip=0):
     """Main function to compute all characters"""
     print(f"Computing characters for n={n} with counts {v_counts}")
     red_good_words = generate_red_good_words(n, v_counts, 0)
@@ -819,7 +814,7 @@ def main(n, v_counts):
         return True
     unique_values = {}
     j=0
-    for i in range(len(red_good_words)):
+    for i in range(skip, len(red_good_words)):
         word = red_good_words[i]
         wordie = concatenate_word(word)
         v_count = [wordie.count(i) for i in range(1, n + 1)]
@@ -952,6 +947,21 @@ def sort_unique_values(input):
             unique_values_list = sorted(unique_values_list, key=oneify)
         return i, unique_values_list
   
+
+def print_character(n, v_count, red_good_words,i):
+    """Print the character for a specific word"""
+    word = red_good_words[i]
+    c_word = concatenate_word(word)
+    v_count = [c_word.count(i) for i in range(1, n + 1)]
+    file_handle = f"simple_character_{c_word}_v_counts_{v_count}.pkl"
+    directory_name = f"_binary_{v_count}"
+    file_name = os.path.join(directory_name, file_handle)
+    
+    current_char = read_file(file_name)
+    if current_char is not None:
+        print(f"Character for {c_word}:")
+        print(format_character(current_char))
+
 def print_unique_values(n, v_count):
     red_good_words = generate_red_good_words(n, v_count, 0)
     unique_values = {}
@@ -960,7 +970,9 @@ def print_unique_values(n, v_count):
     maxes ={}
 
     file_name = f"results_{n}_vcounts_{v_count}.pkl"
-    futures = []
+    futures = []     
+    full_unique_values = set()
+    full_values = set()
     with ProcessPoolExecutor(max_workers=30) as executor:
         for i in range(len(red_good_words)):
             word = red_good_words[i]
@@ -978,21 +990,24 @@ def print_unique_values(n, v_count):
                 valuesq[i] = map(latexify, unique_values[i])
                 values[i] = map(oneify, unique_values[i])
                 maxes[i] = max(values[i])
+                for value in unique_values[i]:
+                    if value not in full_unique_values:
+                        print(f"Unique value for {i}th red-good-word: {wordie}: {oneify(value)}")
+                        print_character(n, v_count, red_good_words,i)
+                        full_unique_values.add(value)
+                        full_values.add(oneify(value))
             except Exception as e:
                 print(f"Error processing {i}: {e}")
                 unique_values[i] = {}
 
 
-        # outs = f"Unique dimensions for {i}th red-good-word: {wordie}\n"
+        # outs = f"Unique dimensions for {i}th red-good-word: {wordie}\n")
         # outs += "\n".join(str(value) for value in values[i]) + "\n"
         # outs += f"Graded dimensions for {i}th red-good-word: {wordie}\n"
         # outs += "\n".join(value for value in valuesq[i]) + "\n"
         # print(outs)
         # with open(file_name, "w") as f:
         #     f.write(outs)
-
-    # Process full unique values
-    full_unique_values = set(x for i in range(len(red_good_words)) for x in unique_values[i])
     full_unique_values = sorted(full_unique_values, key=oneify)
 
     full_values = map(oneify, full_unique_values)
@@ -1438,7 +1453,7 @@ if __name__ == "__main__":
             elif args.mode == "main_parallel":
                 main_parallel(args.n, args.v_counts)
             elif args.mode == "main":
-                done = main(args.n, args.v_counts)
+                done = main(args.n, args.v_counts,args.skip)
             elif args.mode == "skip_to":
                 skip_to(args.n, args.skip, args.v_counts)
             elif args.mode == "do_many":
