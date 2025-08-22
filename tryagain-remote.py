@@ -575,7 +575,7 @@ def closer_for_many_simples(current_chars, red_good_words, n,i):
         return current_chars
     return current_chars
 
-def compute_one_simple_character(red_good_words, i, n, queue=None):
+def compute_one_simple_character(red_good_words, i, n, noreturn=False):
     """Compute the character of a simple module with progress tracking."""
 
     word = red_good_words[i]
@@ -609,7 +609,7 @@ def compute_one_simple_character(red_good_words, i, n, queue=None):
     r=0
     start_time = time.time()
     print_time = time.time() 
-    skip = 1
+    skip = -1
     for j in range(i, -1, -1):
         maybe_char = read_file(file_name)
         if maybe_char is not None:
@@ -631,7 +631,9 @@ def compute_one_simple_character(red_good_words, i, n, queue=None):
             #print(i, " minus ", j, " ", lower_wordies, "r=", r, "time since last save", int(time.time() - start_time))
             current_char = closer_to_a_simple(current_char, red_good_words, n)
     write_file(file_name, current_char)
-    print("finished with ", i, wordie, " time=", time.strftime("%H:%M:%S", time.localtime()), flush=True)
+    print("finished with", i, wordie, " time=", time.strftime("%H:%M:%S", time.localtime()), flush=True)
+    if noreturn:
+        return None
     return current_char
 
 def compute_simple_characters(standard_chars,red_good_words):
@@ -766,7 +768,7 @@ def main_parallel(n, v_counts, skip = 1000, semnum = 10):
             os.makedirs(directory_name, exist_ok=True)
         file_name = os.path.join(directory_name, file_handle)
         char_file_name = os.path.join(directory_name, char_file_handle)
-        if not os.path.exists(char_file_name) or not os.path.exists(file_name) :
+        if not os.path.exists(char_file_name):
             #print("File ", file_name, " not found. Can I make it from ", char_file_name, "?")
             not_done.append(i)
         # for i, future in readings:
@@ -782,27 +784,39 @@ def main_parallel(n, v_counts, skip = 1000, semnum = 10):
         print("All characters already computed!")
         return True
     print(f"----------------restarting {v_counts}----------------")
-    print(f"doing={not_done[:skip]}")
+    doing= not_done[:skip]
+    print(f"doing={doing}")
     print(f"still waiting on {not_done[skip:]}")
     time.sleep(3)
+    failed = []
     with ProcessPoolExecutor(max_workers=semnum) as executor:
         # Submit tasks and keep track of (i, future) pairs
-        futures = [(i, executor.submit(compute_one_simple_character, red_good_words, i, n)) for i in not_done[:skip]]
+        futures = [(i, executor.submit(compute_one_simple_character, red_good_words, i, n, True)) for i in doing]
         for i,future in futures:
-            word = red_good_words[i]
-            wordie = concatenate_word(word)
-            #print("doing ", i, "th red-good-word:", wordie)
             try:
-                file_handle = f"unique_values_{wordie}_v_counts_{v_counts}.pkl"
-                directory_name = f"_binary_{v_counts}"
-                file_name = os.path.join(directory_name, file_handle)
-                #if not os.path.exists(file_name):
-                unique_values[i] = find_dimensions(future.result())
-                write_file(file_name, unique_values[i])  # Use write_file
-                print(f"written vals  {i}")
-                #print(f"done computing unique values for {i}th word=", wordie)
+                #print("doing ", i, "th red-good-word:", wordie, flush=True)
+                future.result()
+                doing.remove(i)
+                print(f"doing={doing}", flush=True)
+                print(f"all done with {i}  time=", time.strftime("%H:%M:%S", time.localtime()), flush=True)
+            # word = red_good_words[i]
+            # wordie = concatenate_word(word)
+            #print("doing ", i, "th red-good-word:", wordie)
+            # try:
+            #     file_handle = f"unique_values_{wordie}_v_counts_{v_counts}.pkl"
+            #     directory_name = f"_binary_{v_counts}"
+            #     file_name = os.path.join(directory_name, file_handle)
+            #     #if not os.path.exists(file_name):
+            #     unique_values[i] = find_dimensions(future.result())
+            #     write_file(file_name, unique_values[i])  # Use write_file
+            #     print(f"written vals  {i}")
+            #     #print(f"done computing unique values for {i}th word=", wordie)
             except Exception as e:
-                print(f"Error processing {i}th word=", wordie)
+                doing.remove(i)
+                failed.append(i)
+                print(f"Still doing={doing}", flush=True)
+                print(f"Failed={failed}", flush=True)
+                print(f"Error processing {i}th word=", wordie, flush=True)
     print("All done!")
     return False
 
@@ -973,7 +987,7 @@ def print_unique_values(n, v_count):
     futures = []     
     full_unique_values = set()
     full_values = set()
-    with ProcessPoolExecutor as executor:
+    with ProcessPoolExecutor(max_workers=30) as executor:
         for i in range(len(red_good_words)):
             word = red_good_words[i]
             wordie = concatenate_word(word)
@@ -1065,10 +1079,53 @@ def redundant_word(word):
             return True
     return False
 
-from math import ceil 
+def process_character_file(red_good_words, i, n, done_chars, find_dim=False):
+    import time
+    start_time = time.time()
+    
+    word = red_good_words[i]
+    wordie = concatenate_word(word)
+    v_count = [wordie.count(i) for i in range(1, n + 1)]
+    directory_name = f"_binary_{v_count}"
+    char_file_handle = f"simple_character_{wordie}_v_counts_{v_count}.pkl"
+    char_file_name = os.path.join(directory_name, char_file_handle)
+    
+    # Quick check if file exists before trying to read
+    if not os.path.exists(char_file_name):
+        return None
+    
+    current_char = read_file(char_file_name)
+    if current_char is None:
+        return None
+        
+    # Pre-filter working words for efficiency
+    current_working_words = [wordies for wordies in current_char.keys() 
+                           if not redundant_word(wordies) and wordies not in done_chars]
+    
+    if find_dim:
+        GKdim = find_GK_dimension(n, current_char)
+        IWS = infinite_weight_space(n, current_char)
+        elapsed = time.time() - start_time
+        #if elapsed > 0.1:  # Only print for slow operations
+        print(f"Processed {i} ({wordie}) in {elapsed:.3f}s - GKdim: {GKdim}, IWS: {IWS}")
+        return current_char, current_working_words, GKdim, IWS
+    else: 
+        #if elapsed > 0.1:  # Only print for slow operations
+            #print(f"Processed {i} ({wordie}) in {elapsed:.3f}s")
+        return current_char
 
-def print_simple_dimensions(n, v_count,rnge=1):
+from concurrent.futures import as_completed
+
+def print_simple_dimensions(n, v_count, rnge=1, semnum=20):
+    import time
+    import psutil
+    
+    print(f"Starting with {semnum} workers, batch size {rnge}")
+    print(f"System has {psutil.cpu_count(logical=False)} physical cores, {psutil.cpu_count(logical=True)} logical cores")
+    
     red_good_words = generate_red_good_words(n, v_count, 0)
+    print(f"Total red_good_words: {len(red_good_words)}")
+    
     unique_values = {}
     values = {}
     valuesq = {}
@@ -1080,81 +1137,302 @@ def print_simple_dimensions(n, v_count,rnge=1):
     file_name = os.path.join(directory_name, file_handle)
     last_word_name = os.path.join(directory_name, last_word_handle)
     if os.path.exists(last_word_name):
-        irrep_sizes, done_chars = read_file(last_word_name)
+        irrep_sizes, done_chars, GKdims, IWS = read_file(last_word_name)
         print("loaded irrep_sizes from ", last_word_name)
-        print(irrep_sizes,done_chars)
+        print(irrep_sizes, done_chars, GKdims, IWS)
     if not os.path.exists(last_word_name) or irrep_sizes is None:
         irrep_sizes = set()
         done_chars = []
-    GKdims = [None] * len(red_good_words)  # Pre-allocate the list with None
-    IWS = [None] * len(red_good_words)    # Pre-allocate the list with None
-    reps = ceil(len(red_good_words)/rnge)
+        GKdims = [None] * len(red_good_words)  # Pre-allocate the list with None
+        IWS = [None] * len(red_good_words)    # Pre-allocate the list with None
+    reps =int(len(red_good_words)/rnge)
     for i in range(reps):
-        working_words=set()
-        for j in range(i*rnge, len(red_good_words)):
-            word = red_good_words[j]
-            wordie = concatenate_word(word)
-            char_file_handle = f"simple_character_{wordie}_v_counts_{v_count}.pkl"
-            char_file_name = os.path.join(directory_name, char_file_handle)
-            current_char = read_file(char_file_name)
-            if j<(i+1)*rnge and current_char is not None:
-                GKdims[j] = find_GK_dimension(n, current_char)
-                IWS[j] = infinite_weight_space(n, current_char)
-                print("GKdim=", GKdims[j], "IWS=", IWS[j])
-                current_irrep_sizes = dict()
-                current_working_words=[wordies for wordies in current_char.keys() if not redundant_word(wordies) and wordies not in done_chars]
+        working_words = set()
+        current_irrep_sizes = dict()
+        
+        # Phase 1: Process primary batch to get working_words
+        batch_start = i * rnge
+        batch_end = min((i + 1) * rnge, len(red_good_words))
+        primary_jobs = list(range(batch_start, batch_end))
+        
+        print(f"Batch {i}: Processing {len(primary_jobs)} primary jobs in parallel")
+        start_time = time.time()
+        
+        with ProcessPoolExecutor(max_workers=semnum) as executor:
+            # Submit primary batch jobs in parallel
+            futures1 = {}
+            for j in primary_jobs:
+                future = executor.submit(process_character_file, red_good_words, j, n, done_chars, True)
+                futures1[future] = j
+            
+            # Process primary results as they complete
+            completed_primary = 0
+            for future in as_completed(futures1):
+                j = futures1[future]
+                result = future.result()
+                completed_primary += 1
+                
+                if completed_primary % 5 == 0:
+                    elapsed = time.time() - start_time
+                    rate = completed_primary / elapsed if elapsed > 0 else 0
+                    print(f"Primary: {completed_primary}/{len(primary_jobs)} ({rate:.1f}/sec) in {elapsed:.1f}s")
+                
+                if result is None:
+                    print(f"Character file for {j} not found, skipping.")
+                    continue
+                    
+                current_char, current_working_words, GKdims[j], IWS[j] = result
                 working_words.update(current_working_words)
-            if j % 100 == 0:
-                print("checking ",  j, "in" , i, "th run")
-            for wordies in working_words:
-                dim=oneify(current_char[wordies])
-                if dim >0:                        
-                    if wordies not in current_irrep_sizes:
-                        current_irrep_sizes[wordies] = [dim]
-                    else:
-                        current_irrep_sizes[wordies].append(dim)
-                    print("added ", dim, " for ", wordies, i, j)
-        current_irrep_sizes = {key: sorted(set(value)) for key, value in current_irrep_sizes.items()}
+                
+                # Process dimensions for primary batch
+                for wordies in working_words:
+                    if wordies not in current_char.keys():
+                        continue
+                    dim = oneify(current_char[wordies])
+                    if dim > 0:                        
+                        if wordies not in current_irrep_sizes:
+                            current_irrep_sizes[wordies] = [dim]
+                        else:
+                            current_irrep_sizes[wordies].append(dim)
+            
+            primary_time = time.time() - start_time
+            print(f"Primary batch completed in {primary_time:.1f}s, found {len(working_words)} working words")
+            
+            # Phase 2: Process secondary batch with the working_words from phase 1
+            secondary_jobs = list(range(batch_end, len(red_good_words)))
+            if secondary_jobs:
+                print(f"Processing {len(secondary_jobs)} secondary jobs in parallel")
+                secondary_start = time.time()
+                
+                futures2 = {}
+                for j in secondary_jobs:
+                    future = executor.submit(process_character_file, red_good_words, j, n, done_chars, False)
+                    futures2[future] = j
+                
+                completed_secondary = 0
+                for future in as_completed(futures2):
+                    j = futures2[future]
+                    result_char = future.result()
+                    completed_secondary += 1
+                    
+                    if completed_secondary % 10 == 0:
+                        elapsed = time.time() - secondary_start
+                        rate = completed_secondary / elapsed if elapsed > 0 else 0
+                        print(f"Secondary: {completed_secondary}/{len(secondary_jobs)} ({rate:.1f}/sec) in {elapsed:.1f}s")
+                    
+                    if result_char is None:
+                        continue
+                        
+                    for wordies in working_words:
+                        if wordies not in result_char.keys():
+                            continue
+                        dim = oneify(result_char[wordies])
+                        if dim > 0:                        
+                            if wordies not in current_irrep_sizes:
+                                current_irrep_sizes[wordies] = [dim]
+                            else:
+                                current_irrep_sizes[wordies].append(dim)
+                
+                secondary_time = time.time() - secondary_start
+                print(f"Secondary batch completed in {secondary_time:.1f}s")
+            
+            total_time = time.time() - start_time
+            total_jobs = len(primary_jobs) + len(secondary_jobs)
+            print(f"Batch {i} total: {total_jobs} jobs in {total_time:.1f}s ({total_jobs/total_time:.1f} jobs/sec)")
+        current_irrep_sizes = {key: sorted(tuple(value)) for key, value in current_irrep_sizes.items()}
         for wordies in working_words:
             if wordies in current_irrep_sizes.keys():
                 print("wordies=", wordies, "gives ", current_irrep_sizes[wordies])
                 irrep_sizes.add(tuple(current_irrep_sizes[wordies]))
                 done_chars.append(wordies)
-        write_file(last_word_name, [irrep_sizes,done_chars])
+        write_file(last_word_name, [irrep_sizes, done_chars, GKdims, IWS])
     print(irrep_sizes)
-    # irrep_sizes1 = {key: list(map(oneify, sizes)) for key, sizes in irrep_sizes.items()}
-    # irrep_sizesq = {key: list(map(latexify, sizes)) for key, sizes in irrep_sizes.items()}
-    # unique_irrep_sizes = set(irrep_sizes.values())
-    # unique_irrep_sizesq = set(irrep_sizesq.values())
-    # print("irrep_sizes=",unique_irrep_sizes)
-    # print("irrep_sizesq=",unique_irrep_sizesq)
+    # gk_dims_true = [GKdims[i] for i in range(len(GKdims)) if IWS[i]]
+    # gk_dims_false = [GKdims[i] for i in range(len(GKdims)) if not IWS[i]]
+    # maxdim=sum(v_count)-v_count[n-1]
+    # plt.hist(
+    #     [gk_dims_false, gk_dims_true],
+    #     bins=range(maxdim + 2),  # Ensure bins cover the full range of GKdims
+    #     align='left',
+    #     stacked=True,
+    #     color=['blue', 'orange'],  # One color per dataset
+    #     label=['IWS', 'No IWS']
+    # )
 
-    # with open(file_name, "w") as f:
-    #     f.write(irrep_sizes)
-    gk_dims_true = [GKdims[i] for i in range(len(GKdims)) if IWS[i]]
-    gk_dims_false = [GKdims[i] for i in range(len(GKdims)) if not IWS[i]]
-    maxdim=sum(v_count)-v_count[n-1]
-    plt.hist(
-        [gk_dims_false, gk_dims_true],
-        bins=range(maxdim + 2),  # Ensure bins cover the full range of GKdims
-        align='left',
-        stacked=True,
-        color=['blue', 'orange'],  # One color per dataset
-        label=['IWS', 'No IWS']
-    )
+    # # Add legend and labels
+    # plt.legend()
+    # plt.xlabel("GK dimension")
+    # plt.ylabel("Number of simples")
+    # plt.title("Histogram of GK dimensions of simple modules")
+    # plt.savefig(f"histogram_GK_dims_{n}_vcounts_{v_count}.png")
+    # plt.close()
 
-    # Add legend and labels
-    plt.legend()
-    plt.xlabel("GK dimension")
-    plt.ylabel("Number of simples")
-    plt.title("Histogram of GK dimensions of simple modules")
-    plt.savefig(f"histogram_GK_dims_{n}_vcounts_{v_count}.png")
-    plt.close()
+def wordie_file_read(file,v_count,n):
+    directory_name = f"_binary_{v_count}"
+    subdirectory_handle = f"words"
+    subdirectory_name = os.path.join(directory_name, subdirectory_handle)
+    # Extract 'wordie' from the filename, assuming the format is 'sizes_{wordie}'
+    if file.startswith("sizes_"):
+        wordie = file[len("sizes_"):]
+        # Optionally, remove file extension if present
+        wordie = os.path.splitext(wordie)[0]
+        idx,sizes_by_word = read_file(os.path.join(subdirectory_name, file))
+        #print(f"Found wordie: {wordie} from file: {file}, starting at idx={idx}")
+    return wordie, idx, sizes_by_word
+
+def async_write_progress(index, sizes_by_word_snapshot, GKdims, IWS, GI_file_name, subdirectory_name):
+        write_file(GI_file_name, (GKdims, IWS))
+        for wordies in sizes_by_word_snapshot.keys():
+            wordie_file_handle = f"sizes_{wordies}"
+            wordie_file_name = os.path.join(subdirectory_name, wordie_file_handle)
+            write_file(wordie_file_name, (index,sizes_by_word_snapshot[wordies]))
+        print(f"Done writing characters for idx={index}.")
+
+def sort_irrep_sizes(files):
+    irrep_sizes = set()
+    for file in files:
+        wordie, idx, sizes_by_word = wordie_file_read(file, v_count, n)
+        if idx == True:
+            sorted_sizes = tuple(sorted(sizes_by_word.values()))
+            irrep_sizes.update(sorted_sizes)
+    return irrep_sizes
+
+def print_simple_dimensions2(n, v_count, rnge=100, semnum=20, skip=0):
+    import time
+    import psutil
+    
+    print(f"Starting with {semnum} workers, batch size {rnge}")
+    print(f"System has {psutil.cpu_count(logical=False)} physical cores, {psutil.cpu_count(logical=True)} logical cores")
+    
+    red_good_words = generate_red_good_words(n, v_count, 0)
+    print(f"Total red_good_words: {len(red_good_words)}")
+    
+    unique_values = {}
+    values = {}
+    valuesq = {}
+    maxes = {}
+
+    file_handle = f"results_{n}_vcounts_{v_count}.pkl"
+    done_handle = f"done_{n}_vcounts_{v_count}.pkl"
+    directory_name = f"_binary_{v_count}"
+    subdirectory_handle = f"words"
+    GI_handle = f"GI_{n}_{v_count}.pkl"
+    file_name = os.path.join(directory_name, file_handle)
+    GI_file_name = os.path.join(directory_name, GI_handle)
+    subdirectory_name = os.path.join(directory_name, subdirectory_handle)
+    done_name = os.path.join(subdirectory_name,done_handle)
+    if not os.path.exists(subdirectory_name):
+        os.makedirs(subdirectory_name, exist_ok=True)
+    if os.path.exists(GI_file_name):
+        GKdims, IWS = read_file(GI_file_name)
+    else:
+        GKdims = [None] * len(red_good_words) 
+        IWS = [None] * len(red_good_words)
+    working_words = set()
+    current_irrep_sizes = dict()
+    start_time = time.time()
+    completed_primary = 0
+    sizes_by_word = dict()
+    idx = dict()
+    files = [f for f in os.listdir(subdirectory_name) if os.path.isfile(os.path.join(subdirectory_name, f)) and f.startswith("sizes_")]
+  
+    for f in files:
+        wordie,idx_temp, sizes_by_word_temp = wordie_file_read(f, v_count,n)
+        idx[wordie]=idx_temp
+        sizes_by_word[wordie]=sizes_by_word_temp
+        if idx[wordie] != True:
+            working_words.add(wordie)
+        if len(list(working_words)) >= semnum:
+            break
+
+
+    if working_words:
+        start_idx = min(idx[wordie] for wordie in working_words)
+        GK_start = min(idx for idx, val in enumerate(GKdims) if val is None)
+        IWS_start = min(idx for idx, val in enumerate(IWS) if val is None)
+        start_idx = min(start_idx, GK_start, IWS_start)
+    else: 
+        irrep_sizes=sort_irrep_sizes(files)
+        write_file(file_name,irrep_sizes)
+    print(f"Starting from index {start_idx}")
+    done_chars=list(range(start_idx))
+    futures1=dict()
+    left_to_do=list(range(start_idx, len(red_good_words)))
+    to_do=len(left_to_do)
+    print(f"size of working_words={len(list(working_words))}")
+    not_doing_now = left_to_do[rnge:]
+    last_time = time.time()
+    for j in left_to_do[:rnge]:
+        result =process_character_file(red_good_words, j, n, done_chars, True)
+        if result is None:
+            print(f"Character file for {j} not found, skipping.")
+            sizes_by_word_snapshot = sizes_by_word.copy()
+            async_write_progress(j-1, sizes_by_word_snapshot, GKdims, IWS, GI_file_name, subdirectory_name)
+            return False
+        current_char, current_working_words, GKdims[j], IWS[j] = result
+        for wordies in current_working_words:
+            wordie_file_handle = f"sizes_{wordies}"
+            wordie_file_name = os.path.join(subdirectory_name, wordie_file_handle)
+            dim = oneify(current_char[wordies])
+            if not os.path.exists(wordie_file_name) and dim > 0:
+                print(f"Writing {wordies} to {wordie_file_name}")
+                write_file(wordie_file_name, (j+1, {j:dim}))
+            if len(list(working_words)) < semnum:
+                working_words.add(wordies)
+            
+        
+        #working_words.update(current_working_words)
+        
+        # Process dimensions for primary batch
+        for wordies in working_words:
+            if wordies not in current_char.keys():
+                continue
+            dim = oneify(current_char[wordies])
+            if dim > 0:                        
+                if wordies not in sizes_by_word:
+                    sizes_by_word[wordies] = {j: dim}
+                else:
+                    sizes_by_word[wordies][j] = dim
+        done_chars.append(j)
+        completed_primary += 1
+        since_wrote = time.time() - last_time
+        print(f"since_wrote: {since_wrote}, j={j}")
+        elapsed = time.time() - start_time
+        if since_wrote > 600:
+            last_time = time.time()
+            rate = completed_primary / elapsed if elapsed > 0 else 0
+            print(f"Completed {completed_primary}/{to_do} ({rate:.1f}/sec) in {elapsed:.1f}s.  {since_wrote} seconds since last wrote")
+            sizes_by_word_snapshot = sizes_by_word.copy()
+            p = multiprocessing.Process(target=async_write_progress, args=(j+1, sizes_by_word_snapshot, GKdims, IWS, GI_file_name,subdirectory_name))
+            p.start()
+        # Start a separate process to write characters so far, allowing the while loop to continue
+
+
+    # Take a snapshot of current state to avoid race conditions
+    sizes_by_word_snapshot = sizes_by_word.copy()
+    if not_doing_now == []:
+        index = True
+    else:
+        index=min(not_doing_now)
+    print(f"Writing characters so far for idx={index}")
+    p = multiprocessing.Process(target=async_write_progress, args=(index, sizes_by_word_snapshot, GKdims, IWS, GI_file_name,subdirectory_name))
+    p.start()
+    
+    return False
+                
+
+    # for wordies in sizes_by_word.keys():
+    #     current_irrep_sizes = sorted(tuple(sizes_by_word[wordies].values()))
+    #     irrep_sizes.add(current_irrep_sizes)
+    # write_file(file_name, [irrep_sizes, done_chars, GKdims, IWS])
+
+    #print(irrep_sizes)
 
 
 import asyncio
 import threading
 from itertools import product
+import multiprocessing
 
 def compute_one_character_in_process(inputs):
     """Compute one character in a separate process."""
@@ -1445,7 +1723,9 @@ if __name__ == "__main__":
     if args.mode == "print_unique_values":
         print_unique_values(args.n, args.v_counts)
     elif args.mode == "print_sd":
-        print_simple_dimensions(args.n, args.v_counts,args.rnge)
+        done = False
+        while done == False:
+            done=print_simple_dimensions2(args.n, args.v_counts,args.rnge,args.semnum,args.skip)
     else:
         done = False
         while done == False:
