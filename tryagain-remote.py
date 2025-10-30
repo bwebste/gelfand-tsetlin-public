@@ -3,6 +3,7 @@ from itertools import permutations
 from collections import defaultdict
 import fractions
 from concurrent.futures import ProcessPoolExecutor
+from math import ceil
 import os
 import time
 import resource
@@ -302,45 +303,16 @@ def compute_standard_character(gl_parts, glp_parts, n):
     result = defaultdict(LaurentPolynomial)
     mult, multdegree = multiplicity_factor(gl_parts)
     
-    # Convert gl_parts and glp_parts to dictionaries
     gl_dicts = [dict_from_word(part) for part in gl_parts]
     glp_dicts = [dict_from_word(part) for part in glp_parts]
-    #print("working on standard character for ", concatenate_word((gl_parts, glp_parts)))
-    #print(str(gl_dicts), str(glp_dicts))
     shuffled_dict = {(): LaurentPolynomial({0: 1})}
     for gl_dict in gl_dicts:
         shuffled_dict = shuffle_dicts(shuffled_dict, gl_dict, n)
         #print(format_character(shuffled_dict))
     for glp_dict in glp_dicts:
         shuffled_dict = shuffle_dicts(shuffled_dict, glp_dict, n)
-        #
-        # print(format_character(shuffled_dict))
-        #print(str(shuffled_dict))
-
-    # Multiply by the multiplicity factor
     for word, poly in shuffled_dict.items():
         result[word] += poly * LaurentPolynomial({multdegree: 1})
-
-    # Generate shuffles and compute weights
-    # if len(gl_parts) >= 1:
-    #     shuffles = list(shuffle_words(gl_parts[0], [], n))
-    #     print("working on standard character for ", concatenate_word((gl_parts, glp_parts)), " just did", gl_parts[0])
-    #     for i in range(1, len(gl_parts)):
-    #         shuffles = list(shuffle_generator(shuffles, gl_parts[i], n))
-    #         print("working on standard character for ", concatenate_word((gl_parts, glp_parts)), " just did", gl_parts[i])
-    #     shuffles = list(shuffle_generator(shuffles, glp_parts[0], n))
-    #     print("working on standard character for ", concatenate_word((gl_parts, glp_parts)), " just did", gl_parts, glp_parts[0])
-    # else:
-    #     shuffles = list(shuffle_words(glp_parts[0], [], n))
-    #     print("working on standard character for ", concatenate_word((gl_parts, glp_parts)), " just did", gl_parts, glp_parts[0])
-    # for i in range(1, len(glp_parts)):
-    #     shuffles = list(shuffle_generator(shuffles, glp_parts[i], n))
-    #     print("working on standard character for ", concatenate_word((gl_parts, glp_parts)), " just did", gl_parts, glp_parts[i])
-    # mult, multdegree = multiplicity_factor(gl_parts)
-    # for shuffled, degree in shuffles:
-    #     weight = LaurentPolynomial({degree + multdegree: 1})
-    #     result[tuple(shuffled)] += weight
-    #print("done with standard character for ", concatenate_word((gl_parts, glp_parts)))
     return result
 def is_bar_invariant(polynomial):
     """Check if a polynomial is bar-invariant"""
@@ -348,38 +320,13 @@ def is_bar_invariant(polynomial):
 
 def try_to_use_characters(red_good_words, i, n):
     current_char=None
-    """Try to use characters of simple modules to compute the character of a standard module"""
+    """Try to use characters of simple modules to compute the character of a larger simple module"""
     word = red_good_words[i]
     gl_parts, glp_parts = word
-    # if all(1 not in part for part in gl_parts) and all(1 not in part for part in glp_parts):
-    #     print(f"All parts of {concatenate_word(word)} do not contain 1, using standard character.")
-    #     smaller_glp_parts = [[x - 1 for x in part] for part in glp_parts]
-    #     smaller_gl_parts = [[x - 1 for x in part] for part in gl_parts]
-    #     smaller_word = (smaller_gl_parts, smaller_glp_parts)
-    #     c_word = concatenate_word(smaller_word)
-    #     v_count = [c_word.count(i) for i in range(1, n + 1)]
-    #     file_handle = f"simple_character_{c_word}_v_counts_{v_count}.pkl"
-    #     directory_name = f"_binary_{v_count}"
-    #     if not os.path.exists(directory_name):
-    #         os.makedirs(directory_name, exist_ok=True)
-    #     file_name = os.path.join(directory_name, file_handle)
-    #     smaller_char = read_file(file_name)
-    #     if smaller_char is not None:
-    #         # Add 1 to each entry of each key in smaller_char
-    #         shifted_char = {}
-    #         for key, value in smaller_char.items():
-    #             shifted_key = tuple(x + 1 for x in key)
-    #             shifted_char[shifted_key] = value
-    #         current_char = shifted_char
-    #         return current_char
     if glp_parts != []:
         smaller_glp_parts = glp_parts[0:-1]
-        #print(f"gl_parts={gl_parts}, glp_parts={glp_parts}, smaller_glp_parts={smaller_glp_parts}")
         smaller_word = [gl_parts,smaller_glp_parts]
-        #print(f"smaller_word={smaller_word}")
         c_word = concatenate_word(smaller_word)
-        #print(f"c_word={c_word}")
-        time.sleep(1)
         v_count = [c_word.count(i) for i in range(1, n + 1)]
         if all(v_count[i] == 0 for i in range(len(v_count))):
             current_char = compute_standard_character(gl_parts, glp_parts, n)
@@ -1288,13 +1235,39 @@ def async_write_progress(index, sizes_by_word_snapshot, GKdims, IWS, GI_file_nam
             write_file(wordie_file_name, (index,sizes_by_word_snapshot[wordies]))
         print(f"Done writing characters for idx={index}.")
 
-def sort_irrep_sizes(files):
-    irrep_sizes = set()
+def sort_irrep_sizes(files, v_count, n,width):
+    irrep_sizes = dict()
     for file in files:
         wordie, idx, sizes_by_word = wordie_file_read(file, v_count, n)
         if idx == True:
             sorted_sizes = tuple(sorted(sizes_by_word.values()))
-            irrep_sizes.update(sorted_sizes)
+            irrep_sizes[sorted_sizes] = wordie
+    table = r"\centerline{\begin{tabular}{" + "ll|" * (width-1)+"ll" + "}\n" 
+    tableend = r"\end{tabular}}\smallskip" +"\n"
+    # Sort irrep_sizes by the length of sizes before enumerating
+    sorted_irrep_sizes = sorted(irrep_sizes.items(), key=lambda x: len(x[0]))
+    numlines=ceil(len(sorted_irrep_sizes)/width)
+    lines=[""]*numlines
+    for i, (sizes, wordie) in enumerate(sorted_irrep_sizes):
+        wordie_string = wordie.replace("(", "").replace(")", "").replace(",", "").replace(" ", "")
+        if len(sizes) == 1:
+            sizes_string = "(" + str(sizes[0]) + ")"
+        else:
+            sizes_string = str(sizes)
+        k= i % numlines
+        if len(sorted_irrep_sizes)% width ==0:
+            bc = len(sorted_irrep_sizes) -1
+        else:
+            bc = numlines*(width-1)-1
+        if i == bc:
+            lines[k] += f" {sizes_string} & {wordie_string}" + "\n"
+        elif i >= numlines*(width - 1):
+            lines[k] += f" {sizes_string} & {wordie_string}" + r"\\ " + "\n"
+        else:
+            lines[k] += f" {sizes_string} & {wordie_string} &"
+    table += "".join(lines)
+    table += tableend
+    print(table)
     return irrep_sizes
 
 def print_simple_dimensions2(n, v_count, rnge=100, semnum=20, skip=0):
@@ -1320,9 +1293,11 @@ def print_simple_dimensions2(n, v_count, rnge=100, semnum=20, skip=0):
     file_name = os.path.join(directory_name, file_handle)
     GI_file_name = os.path.join(directory_name, GI_handle)
     subdirectory_name = os.path.join(directory_name, subdirectory_handle)
-    done_name = os.path.join(subdirectory_name,done_handle)
     if not os.path.exists(subdirectory_name):
         os.makedirs(subdirectory_name, exist_ok=True)
+    done_name = os.path.join(subdirectory_name,done_handle)
+    if not os.path.exists(done_name):
+        write_file(done_name, False)
     if os.path.exists(GI_file_name):
         GKdims, IWS = read_file(GI_file_name)
     else:
@@ -1344,16 +1319,38 @@ def print_simple_dimensions2(n, v_count, rnge=100, semnum=20, skip=0):
             working_words.add(wordie)
         if len(list(working_words)) >= semnum:
             break
-
+    doneq = read_file(done_name)
 
     if working_words:
-        start_idx = min(idx[wordie] for wordie in working_words)
-        GK_start = min(idx for idx, val in enumerate(GKdims) if val is None)
-        IWS_start = min(idx for idx, val in enumerate(IWS) if val is None)
+        start_idx = min((idx[wordie] for wordie in working_words), default=len(red_good_words))
+        GK_start = min((idx for idx, val in enumerate(GKdims) if val is None), default=len(GKdims))
+        IWS_start = min((idx for idx, val in enumerate(IWS) if val is None), default=len(IWS))
         start_idx = min(start_idx, GK_start, IWS_start)
-    else: 
-        irrep_sizes=sort_irrep_sizes(files)
+    elif doneq == False:
+        start_idx = 0
+    elif doneq == True:
+        irrep_sizes=sort_irrep_sizes(files, v_count, n,4)
         write_file(file_name,irrep_sizes)
+        gk_dims_true = [GKdims[i] for i in range(len(GKdims)) if IWS[i]]
+        gk_dims_false = [GKdims[i] for i in range(len(GKdims)) if not IWS[i]]
+        maxdim=sum(v_count)-v_count[n-1]
+        plt.hist(
+            [gk_dims_false, gk_dims_true],
+            bins=range(maxdim + 2),  # Ensure bins cover the full range of GKdims
+            align='left',
+            stacked=True,
+            color=['blue', 'orange'],  # One color per dataset
+            label=['No IWS', 'IWS']
+        )
+
+        # Add legend and labels
+        plt.legend()
+        plt.xlabel("GK dimension")
+        plt.ylabel("Number of simples")
+        plt.title("Histogram of GK dimensions of simple modules")
+        plt.savefig(f"histogram_GK_dims_{n}_vcounts_{v_count}.png")
+        plt.close()
+        return True
     print(f"Starting from index {start_idx}")
     done_chars=list(range(start_idx))
     futures1=dict()
@@ -1412,6 +1409,7 @@ def print_simple_dimensions2(n, v_count, rnge=100, semnum=20, skip=0):
     sizes_by_word_snapshot = sizes_by_word.copy()
     if not_doing_now == []:
         index = True
+        write_file(done_name, True)
     else:
         index=min(not_doing_now)
     print(f"Writing characters so far for idx={index}")
@@ -1419,15 +1417,6 @@ def print_simple_dimensions2(n, v_count, rnge=100, semnum=20, skip=0):
     p.start()
     
     return False
-                
-
-    # for wordies in sizes_by_word.keys():
-    #     current_irrep_sizes = sorted(tuple(sizes_by_word[wordies].values()))
-    #     irrep_sizes.add(current_irrep_sizes)
-    # write_file(file_name, [irrep_sizes, done_chars, GKdims, IWS])
-
-    #print(irrep_sizes)
-
 
 import asyncio
 import threading
