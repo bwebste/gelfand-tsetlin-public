@@ -1338,6 +1338,7 @@ def print_simple_dimensions2(n, v_count, rnge=100, semnum=20, skip=0):
   
     for f in files:
         wordie,idx_temp, sizes_by_word_temp = wordie_file_read(f, v_count,n)
+        print(f"Read sizes for wordie={wordie} from file={f}, idx={idx_temp}")
         idx[wordie]=idx_temp
         sizes_by_word[wordie]=sizes_by_word_temp
         if idx[wordie] != True:
@@ -1348,8 +1349,8 @@ def print_simple_dimensions2(n, v_count, rnge=100, semnum=20, skip=0):
 
     if working_words:
         start_idx = min(idx[wordie] for wordie in working_words)
-        GK_start = min(idx for idx, val in enumerate(GKdims) if val is None)
-        IWS_start = min(idx for idx, val in enumerate(IWS) if val is None)
+        GK_start = min((idx for idx, val in enumerate(GKdims) if val is None), default=len(red_good_words))
+        IWS_start = min((idx for idx, val in enumerate(IWS) if val is None), default=len(red_good_words))
         start_idx = min(start_idx, GK_start, IWS_start)
     else: 
         irrep_sizes=sort_irrep_sizes(files)
